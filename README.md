@@ -1,12 +1,17 @@
-# Phase 0 spike: can a browser BLAKE3 match WebCrypto sha256?
+# Can a browser BLAKE3 match WebCrypto sha256?
 
-This is phase 0 of `~/dev/blake3.md` - the part that can kill the plan. No Peergos code
-is involved and nothing here is meant to ship: it exists to produce a number.
+A benchmark, not a library: nothing here is meant to ship. It answers one question for a
+file storage app that hashes uploads in the browser, where there is no WebCrypto BLAKE3,
+so the hash has to be its own code.
 
-**The question.** Peergos wants to replace its sha256 tree hash with a real BLAKE3 tree
-over 4 MiB chunks. Uploads hash in the browser, where there is no WebCrypto BLAKE3, so
-the hash has to be our own code. The target from the plan is **>=742 MiB/s (<=6.7 ms per
-5 MiB)**, i.e. parity with WebCrypto sha256.
+**The requirement.** Hash files as a real BLAKE3 tree over 4 MiB chunks - each chunk
+hashed independently as a subtree, the chunk chaining values merged into the file's hash,
+so that `b3sum` on the file prints what is stored. The bar is **>=742 MiB/s (<=6.7 ms per
+5 MiB)**: parity with the WebCrypto sha256 it would replace.
+
+Why 4 MiB: BLAKE3 is a binary tree over 1 KiB chunks, so a subtree hash is only part of
+the file's hash if it covers a power-of-two number of chunks and starts at a multiple of
+its own length. 4 MiB is 4096 chunks; 5 MiB is 5120 and never a subtree of anything.
 
 ## Verdict: the target is met, and both candidates are alive
 
@@ -19,15 +24,14 @@ the hash has to be our own code. The target from the plan is **>=742 MiB/s (<=6.
 
 - **wasm wins outright**: 2.4x sha256 in Firefox, 1.9x in Chromium, in a 29 KB artefact,
   with the copy into linear memory included.
-- **Optimised pure JS is a real candidate**, contrary to what an earlier version of this
-  README said. Code generation took it from 119 to **794 MiB/s in Chromium** - a 6.7x
+- **Optimised pure JS is a real candidate.** Code generation took it from 119 to
+  **794 MiB/s in Chromium** - a 6.7x
   gain, and 0.88x sha256, over the target. Firefox gains less (130 -> 228, 1.75x) and
   misses the bar on one thread, but reaches **806 MiB/s aggregate at 4 workers**, which
-  is what an upload actually uses: `HashTree.buildParallel` already hashes chunks in
-  parallel.
-- So the plan's "pure JS has advantages that do not show up in a kernel benchmark" holds
-  up: it needs no CSP change and no second artefact, and it is now within a factor of
-  2.4 of wasm rather than 15.
+  is what an upload actually uses, since chunks are hashed in parallel anyway.
+- Pure JS has two advantages a kernel benchmark does not show: it needs no CSP change and
+  no second artefact in the page load. It is now within a factor of 2.4 of wasm rather
+  than 15, which makes those advantages worth weighing.
 
 ## What the optimisation was
 
@@ -46,25 +50,11 @@ Generated offline and committed, **not** `new Function()` at load time: runtime 
 generation is exactly what would force `unsafe-eval` into the CSP, and staying out of the
 CSP is one of pure JS's two advantages.
 
-Two things measured rather than assumed:
-
-- **A smaller per-block function is worse**, not better: 188 MiB/s against 228 in
-  Firefox. The 3.4x Firefox/Chromium gap on identical code is not an engine limit on
-  function size - SpiderMonkey is simply weaker on this code than V8. `chunkCVsSmall` is
-  kept in the generated file so the comparison can be re-run.
-- **The `wasm32_simd` crate feature is the whole of wasm's advantage.** Without it the
-  same wasm build is 592 MiB/s (Firefox); with it, 1942. `RUSTFLAGS=-C
-  target-feature=+simd128` alone does nothing (592 vs 592), because the crate's wasm SIMD
-  sits behind that Cargo feature, not the target feature. Anyone repeating this without
-  it measures a portable scalar build and concludes wasm is merely adequate.
-- **The copy into linear memory is not the tax the plan feared**: 0.1 ms per 4 MiB, about
-  1.5% of the hash.
-
 ## Measured
 
 Both browsers headless on this machine (16 cores reported), hashing from the point where
-a worker already holds the `ArrayBuffer` through to a chaining value, as the plan
-requires. `aggregate` is total bytes over the slowest worker's hashing loop, excluding
+a worker already holds the `ArrayBuffer` through to a chaining value: bytes arrive from a
+`File.slice()`, and a candidate that must copy them somewhere first pays for that here. `aggregate` is total bytes over the slowest worker's hashing loop, excluding
 worker startup and module compilation.
 
 | 1 worker | Firefox 155 | Chromium |
@@ -87,18 +77,19 @@ worker startup and module compilation.
 
 Artefact sizes, which land in the initial page load: wasm 12 KB scalar, 14 KB with
 `+simd128`, **29 KB with `wasm32_simd`**; the generated JS is 1566 lines, ~60 KB
-unminified, and replaces no existing download.
+unminified.
 
 ## What is here
 
 - `wasm/` — a small Rust crate wrapping the reference `blake3` crate, built for
-  wasm32-unknown-unknown, exposing the plan's subtree entry points: `subtree_cv`
+  wasm32-unknown-unknown, exposing the subtree entry points: `subtree_cv`
   (which is `set_input_offset` + `update` + `finalize_non_root`), `merge_non_root`,
   `merge_root`, plus `hash_all` for the vectors. Deliberately **not** wasm-bindgen: one
   exported memory and a preallocated input buffer, so the artefact is small, there is no
   generated JS glue, and the copy into linear memory stays visible to the benchmark.
 - `src/blake3-fast.js` — **generated** by `tools/gen-fast.py`: the optimised pure JS
-  candidate, fast only for the shape uploads use (whole, power-of-two, aligned chunks).
+  candidate, fast only for the shape that matters here: whole, power-of-two, aligned
+  runs of chunks.
   Do not edit it; edit the generator.
 - `src/blake3.js` — the readable reference: `hash` (one-shot, what `b3sum` prints) plus
   the same subtree API — `subtreeCV`, `mergeNonRoot`, `mergeRoot`. Written with the V8
@@ -106,7 +97,7 @@ unminified, and replaces no existing download.
   locals rather than arrays, straight-line rounds, permutation by renaming, no allocation
   per block. **Not** the generated-code or SIMD versions from that write-up.
 - `test/tests.mjs` — the 35 official BLAKE3 vectors, the subtree-rebuild property at
-  several sizes including the 4 MiB Peergos shape, and rejection of misaligned subtrees.
+  several sizes including the 4 MiB chunk shape, and rejection of misaligned subtrees.
 - `test/wasm.html` — the same vectors through each wasm build, and every wasm subtree
   call and merge checked against the JS implementation.
 - `test/b3sum.mjs` — the claim checked against the reference binary.
@@ -134,48 +125,50 @@ cp target/wasm32-unknown-unknown/release/blake3_wasm.wasm ../bench/wasm/blake3-s
 ## Verified
 
 - All 35 official BLAKE3 test vectors pass, in Firefox and Chromium, for the JS
-  implementation and for all three wasm builds (132 assertions).
+  implementations and for all three wasm builds (153 assertions in total).
 - Every wasm subtree CV and merge agrees with the JS implementation, at several chunk
   indices including a 4 MiB subtree at offset 4 MiB.
 - `b3sum` agreement on random files at 0, 1, 1023, 1024, 1025, 4 MiB−1, 4 MiB, 4 MiB+1,
   8 MiB and 10 MiB bytes.
-- The property the migration rests on: an 8 MiB file hashed as two 4 MiB subtree chaining
-  values and merged gives the same hash `b3sum` prints. This is what makes the stored
-  root hash the file's real BLAKE3 hash rather than a tree of our own.
+- The property the whole approach rests on: an 8 MiB file hashed as two 4 MiB subtree
+  chaining values and merged gives the same hash `b3sum` prints. That is what makes the
+  stored root hash the file's real BLAKE3 hash rather than a tree of one's own.
 
-## Still to do before phase 0 is closed
+## Not measured
 
-The target is met, so the plan is not blocked. What remains is coverage, not a decision:
+The target is met by both candidates, so what remains is coverage rather than a decision:
 
 1. **Android WebView** — the slowest thing that has to do this, and the easiest to
    forget. Nothing here has been run on a phone. wasm SIMD is available in modern
    WebView, but the margin is 3x on desktop, not 30x.
 2. **More than one machine.** These are all one desktop; a low-end laptop is the case
    that decides whether the margin is comfortable.
-3. **Hand-written WASM SIMD, and runtime-generated SIMD WASM.** Now unnecessary: the
-   crate's own `wasm32_simd` beats the target by 2x. Left unmeasured deliberately.
+3. **Hand-written WASM SIMD, and runtime-generated SIMD WASM** (the trick at the end of
+   https://parsa.wtf/blake3/, which ships no `.wasm` at all). Unnecessary here: the
+   crate's own `wasm32_simd` already beats the target by 2x, and generating wasm at
+   runtime needs the same CSP header as shipping a file.
 4. **Why Firefox is 3.4x slower than Chromium on identical JS.** Worth an hour with the
    profiler if pure JS is the preferred route, since that gap is the only thing keeping
    pure JS off the single-thread target. A smaller function shape is not the answer -
    that was measured, and it is worse.
 5. **SharedArrayBuffer threads inside one wasm instance** versus N independent workers.
    N workers already reach 8 GiB/s aggregate, so this is an optimisation, not a question.
-6. **CSP.** Phase 4's note stands: shipping wasm needs `wasm-unsafe-eval` in the page's
-   header, which is the one real cost of choosing wasm over JS.
+6. **CSP.** Shipping wasm needs `wasm-unsafe-eval` in the page's header. That is the one
+   real cost of choosing wasm over JS, and it is a policy question rather than a
+   measurement.
 
-## What the numbers mean for the plan
+## Conclusion
 
-The plan's fallbacks are not needed. On this hardware, in both browsers:
+On this hardware, in both browsers:
 
-- With wasm, the browser hash is **1.9-2.4x faster than the sha256 it replaces**, single
-  threaded, and 2-3x faster across 16 workers. The artefact is **29 KB** and the copy
-  into linear memory costs **1.5%**.
+- With wasm, BLAKE3 is **1.9-2.4x faster than the sha256 it would replace**, single
+  threaded, and 2-3x faster across 16 workers, from a **29 KB** artefact whose copy into
+  linear memory costs **1.5%**.
 - With pure JS, it is **0.88x sha256 in Chromium** and **0.28x in Firefox** on one
-  thread, reaching the target at 4 workers in Firefox. That is a live option, and the one
-  that needs no CSP change - the choice is now a trade, not a constraint.
-- So the phase 0 exit criterion is met either way, and the chunk size and hash change can
-  proceed - with the Android WebView number still owed before anyone relies on the
-  margin, especially for the JS route.
+  thread, reaching the target at 4 workers in Firefox. A live option, and the only one
+  needing no CSP change - so the choice is a trade, not a constraint.
+- Either way the bar is cleared, with the Android WebView number still owed before anyone
+  relies on the margin, especially for the JS route.
 
 `src/blake3.js` stays as the executable specification: readable, agrees with `b3sum`, and
 both the wasm build and the generated JS are tested against it.

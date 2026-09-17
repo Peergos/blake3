@@ -26,7 +26,6 @@ CSP is one of pure JS's two advantages.
 | **wasm, `wasm32_simd`, 4 MiB** | **2.1 ms - 1942 MiB/s** | **2.4 ms - 1670 MiB/s** |
 | wasm, portable scalar | 6.8 ms - 592 MiB/s | 5.9 ms - 679 MiB/s |
 | wasm, `+simd128` flag only | 6.8 ms - 592 MiB/s | 5.7 ms - 697 MiB/s |
-| wasm copy into linear memory alone | 0.1 ms | 0.1 ms |
 | **optimised JS, 4 MiB subtree** | 17.6 ms - **228 MiB/s** | 5.0 ms - **794 MiB/s** |
 | optimised JS, small-function shape | 21.3 ms - 188 MiB/s | not measured |
 | readable JS, 4 MiB subtree | 30.7 ms - 130 MiB/s | 33.6 ms - 119 MiB/s |

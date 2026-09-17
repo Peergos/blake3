@@ -989,7 +989,7 @@ const resultWords = new Uint32Array(8);
 
 /**
  * The chaining value of one aligned, power-of-two subtree: the call an upload makes per
- * Peergos chunk. Returns 32 bytes.
+ * 4 MiB chunk. Returns 32 bytes.
  *
  * `bytes` must be 4 byte aligned within its buffer, which File.slice() ArrayBuffers are.
  */

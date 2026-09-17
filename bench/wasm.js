@@ -15,7 +15,7 @@ export async function load(url) {
     const capacity = e.input_capacity();
 
     // Views over the module's linear memory. Taken once: a fresh Uint8Array per chunk
-    // would be an allocation per hash, which is what the plan warns about.
+    // would be an allocation per hash, on every chunk.
     const mem = new Uint8Array(memory.buffer);
     const input = mem.subarray(inputPtr, inputPtr + capacity);
     const output = mem.subarray(outputPtr, outputPtr + 32);

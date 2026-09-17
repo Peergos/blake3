@@ -19,22 +19,30 @@ CSP is one of pure JS's two advantages.
 
 ## Measured
 
-| 1 worker | Firefox 155 | Chromium |
-|---|---|---|
-| WebCrypto SHA-256, 5 MiB (the bar) | 6.2 ms - **804 MiB/s** | 5.6 ms - **898 MiB/s** |
-| WebCrypto SHA-512, 5 MiB | 13.1 ms - 382 MiB/s | 10.7 ms - 466 MiB/s |
-| **wasm, `wasm32_simd`, 4 MiB** | **2.1 ms - 1942 MiB/s** | **2.4 ms - 1670 MiB/s** |
-| wasm, portable scalar | 6.8 ms - 592 MiB/s | 5.9 ms - 679 MiB/s |
-| wasm, `+simd128` flag only | 6.8 ms - 592 MiB/s | 5.7 ms - 697 MiB/s |
-| **optimised JS, 4 MiB subtree** | 17.6 ms - **228 MiB/s** | 5.0 ms - **794 MiB/s** |
-| optimised JS, small-function shape | 21.3 ms - 188 MiB/s | not measured |
-| readable JS, 4 MiB subtree | 30.7 ms - 130 MiB/s | 33.6 ms - 119 MiB/s |
+Every row hashes **4 MiB**, so latencies compare directly as well as rates. Run to run
+these vary by about 10%.
 
-| aggregate across workers | Firefox 155 | Chromium |
+| 1 worker, 4 MiB | Firefox 155 | Chromium |
 |---|---|---|
-| wasm simd x2 / x4 / x16 | 3540 / 6344 / **8384 MiB/s** | 2893 / 4906 / **8120 MiB/s** |
-| optimised JS x2 / x4 / x16 | 434 / **806** / 1433 MiB/s | 700 / **1249** / 1942 MiB/s |
-| sha256 x16 | 3622 MiB/s | 5932 MiB/s |
+| WebCrypto SHA-256 (the bar) | 5.1 ms - **781 MiB/s** | 4.4 ms - **901 MiB/s** |
+| WebCrypto SHA-512 | 11.2 ms - 357 MiB/s | 8.3 ms - 483 MiB/s |
+| **wasm, `wasm32_simd`** | **2.1 ms - 1905 MiB/s** | **2.2 ms - 1798 MiB/s** |
+| wasm, portable scalar | 7.0 ms - 573 MiB/s | 5.7 ms - 703 MiB/s |
+| wasm, `+simd128` flag only | 6.8 ms - 587 MiB/s | 5.9 ms - 677 MiB/s |
+| wasm kernel only, no copy | 6.9 ms - 580 MiB/s | 5.8 ms - 690 MiB/s |
+| wasm copy into linear memory alone | 0.1 ms | 0.1 ms |
+| **optimised JS** | 18.6 ms - **215 MiB/s** | 5.2 ms - **777 MiB/s** |
+| optimised JS, small-function shape | 22.9 ms - 175 MiB/s | 21.2 ms - 189 MiB/s |
+| readable JS | 29.7 ms - 135 MiB/s | 33.7 ms - 119 MiB/s |
+
+At 5 MiB sha256 measures 814 MiB/s (Firefox) and 1033 (Chromium), so the rate hardly
+moves with input size.
+
+| aggregate across workers, 4 MiB each | Firefox 155 | Chromium |
+|---|---|---|
+| wasm simd x2 / x4 / x16 | 2186 / 4051 / **8193 MiB/s** | 3256 / 5626 / **9739 MiB/s** |
+| optimised JS x2 / x4 / x16 | 386 / 730 / 1182 MiB/s | 679 / 1281 / 2154 MiB/s |
+| sha256 x2 / x4 / x16 | 1405 / 2602 / 3459 MiB/s | 1891 / 3061 / 5804 MiB/s |
 
 Artefact sizes, which land in the initial page load: wasm 12 KB scalar, 14 KB with
 `+simd128`, **29 KB with `wasm32_simd`**; the generated JS is 1566 lines, ~60 KB

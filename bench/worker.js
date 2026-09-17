@@ -1,5 +1,5 @@
-// One hashing worker. Timing starts when the worker already holds the ArrayBuffer, as
-// blake3.md requires: a candidate that must first copy the bytes somewhere pays for it.
+// One hashing worker. Timing starts when the worker already holds the ArrayBuffer: a
+// candidate that must first copy the bytes somewhere pays for that here.
 import { subtreeCV, hash, CHUNK_LEN } from "../src/blake3.js";
 import { load } from "./wasm.js";
 import { subtreeCV as fastSubtreeCV, subtreeCVSmall } from "../src/blake3-fast.js";

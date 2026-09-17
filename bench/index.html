@@ -2,8 +2,8 @@
 <meta charset="utf-8">
 <title>BLAKE3 vs WebCrypto benchmark</title>
 <body style="font: 14px monospace; padding: 16px; max-width: 900px">
-<h1>Phase 0 benchmark</h1>
-<p>Target from blake3.md: <b>≥742 MiB/s</b>, i.e. WebCrypto SHA-256's 6.7&nbsp;ms per 5&nbsp;MiB.</p>
+<h1>BLAKE3 vs WebCrypto benchmark</h1>
+<p>Target: <b>≥742 MiB/s</b>, parity with WebCrypto SHA-256.</p>
 <pre id="out">running…</pre>
 <script type="module">
 const MiB = 1024 * 1024;
@@ -62,7 +62,10 @@ const row = (r) => {
 try {
     say("cores reported: " + cores);
     say("");
-    say("baseline (what we have to match):");
+    say("baseline (what we have to match), at the same 4 MiB the blake3 rows use:");
+    row(await measure("sha256", 4 * MiB, 20, 3, 1));
+    row(await measure("sha512", 4 * MiB, 20, 3, 1));
+    say("  and at 5 MiB, the legacy chunk size, to show size does not change the rate:");
     row(await measure("sha256", 5 * MiB, 20, 3, 1));
     row(await measure("sha512", 5 * MiB, 20, 3, 1));
     say("");
@@ -83,7 +86,7 @@ try {
     row(await measure("wasm-simd128-nocopy", 4 * MiB, 20, 3, 1));
     row(await measure("wasm-simd128-copyonly", 4 * MiB, 20, 3, 1));
     say("");
-    say("parallel, which is what HashTree.buildParallel already does:");
+    say("parallel, which is how an upload hashes chunks anyway:");
     for (const n of [2, 4, cores])
         row(await measure("blake3-fast", 4 * MiB, 8, 2, n));
     say("");
@@ -91,13 +94,14 @@ try {
         row(await measure("wasm-simdfeature-copy", 4 * MiB, 10, 2, n));
     say("");
     say("sha256 in parallel, for the same comparison:");
-    row(await measure("sha256", 5 * MiB, 20, 3, cores));
+    for (const n of [2, 4, cores])
+        row(await measure("sha256", 4 * MiB, 20, 3, n));
 
     const wasmBest = results.rows.filter(r => r.mode.startsWith("wasm-") && r.mode.endsWith("-copy") && r.workers === 1)
         .sort((a, b) => b.perWorkerMiBs - a.perWorkerMiBs)[0];
     const fastRow = results.rows.find(r => r.mode === "blake3-fast" && r.workers === 1);
     const b3 = results.rows.find(r => r.mode === "blake3-subtree" && r.workers === 1);
-    const sha = results.rows.find(r => r.mode === "sha256" && r.workers === 1);
+    const sha = results.rows.find(r => r.mode === "sha256" && r.workers === 1 && r.sizeMiB === 4);
     results.verdict = {
         targetMiBs: 742,
         blake3SingleMiBs: b3.perWorkerMiBs,

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Check our hashes against the b3sum binary, which is the requirement in blake3.md:
-"b3sum on the file must print what we store".
+"""Check the hashes against the b3sum binary: b3sum on a file must print what is stored.
 
 Independent of test_vectors.json - a shared misreading of the spec would pass those and
 fail here. Generates random files, including sizes either side of the 4 MiB chunk

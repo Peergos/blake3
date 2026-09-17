@@ -28,14 +28,14 @@ export function runTests(vectors) {
     }
 
     // 2. A subtree CV is not a hash: the two must differ, or we are finalising when we
-    //    should not be. (Peergos stores CVs for chunks and merges them.)
+    //    should not be: chunk CVs are stored and merged, not finalised.
     const oneChunk = testInput(CHUNK_LEN);
     check("chunk CV differs from chunk hash",
         toHex(subtreeCV(oneChunk, 0)) === toHex(hash(oneChunk)) ? "same" : "different", "different");
 
-    // 3. The property the whole plan rests on: hashing a file in aligned power-of-two
+    // 3. The property everything rests on: hashing a file in aligned power-of-two
     //    subtrees and merging the CVs gives the real BLAKE3 hash of the file.
-    //    Sizes in 1KiB chunks, with the subtree size Peergos would use.
+    //    Sizes in 1KiB chunks, with the subtree size an upload would use.
     for (const [totalChunks, subtreeChunks] of [[2, 1], [4, 1], [4, 2], [8, 2], [8, 4], [16, 4], [64, 16]]) {
         const bytes = testInput(totalChunks * CHUNK_LEN);
         const cvs = [];
@@ -68,7 +68,7 @@ export function runTests(vectors) {
     rejects("rejects 3 chunks", () => subtreeCV(testInput(3 * CHUNK_LEN), 0));
     rejects("rejects a misaligned start", () => subtreeCV(testInput(2 * CHUNK_LEN), 1));
 
-    // 5. The Peergos shape itself: 4 MiB subtrees of an 8 MiB and a 16 MiB input.
+    // 5. The real shape: 4 MiB subtrees of an 8 MiB and a 16 MiB input.
     //    This is the case that makes the root hash the file's real BLAKE3 hash.
     const MiB = 1024 * 1024;
     for (const totalMiB of [8, 16]) {

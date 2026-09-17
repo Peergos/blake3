@@ -1,9 +1,9 @@
-// BLAKE3 in pure JavaScript, with the subtree entry points Peergos needs.
+// BLAKE3 in pure JavaScript, with subtree entry points.
 //
-// Peergos hashes a file in 4 MiB chunks, in parallel, and needs each chunk's
-// *chaining value* rather than a finished hash, so that merging them yields the real
-// BLAKE3 hash of the whole file. That is what subtreeCV/mergeNonRoot/mergeRoot are for;
-// hash() is the ordinary one-shot API, kept for the official test vectors.
+// The use case is hashing a file in 4 MiB chunks, in parallel, where each chunk's
+// *chaining value* is needed rather than a finished hash, so that merging them yields the
+// real BLAKE3 hash of the whole file. That is what subtreeCV/mergeNonRoot/mergeRoot are
+// for; hash() is the ordinary one-shot API, kept for the official test vectors.
 //
 // Speed notes (the V8 techniques from https://parsa.wtf/blake3/):
 //  - the 16 state words live in local variables, never an array, through all 7 rounds
@@ -224,7 +224,7 @@ export function mergeRoot(leftCV, rightCV) {
  *
  * `bytes` must be a whole number of 1 KiB chunks, a power of two of them, and
  * `chunkIndex` must be a multiple of that count - otherwise it is not a subtree of
- * anything and the result is meaningless. A 4 MiB Peergos chunk at file offset
+ * anything and the result is meaningless. A 4 MiB chunk at file offset
  * `i * 4 MiB` is subtreeCV(chunk, i * 4096).
  */
 export function subtreeCV(bytes, chunkIndex) {

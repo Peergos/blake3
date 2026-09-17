@@ -17,6 +17,8 @@ wasm or JS at runtime is what would force `wasm-unsafe-eval`/`unsafe-eval` into 
 and staying out of the CSP is one of pure JS's two advantages.
 """
 
+import re
+
 MSG_PERMUTATION = [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8]
 
 # the four (a, b, c, d) quartets of a round: columns then diagonals
@@ -102,15 +104,16 @@ export function chunkCVs(words, wordOff, chunks, counterStart, out) {
         const counterLow = (counterStart + chunk) >>> 0;
         const counterHigh = Math.floor((counterStart + chunk) / 4294967296) >>> 0;
         let h0 = IV0, h1 = IV1, h2 = IV2, h3 = IV3, h4 = IV4, h5 = IV5, h6 = IV6, h7 = IV7;
-        let base = wordOff + chunk * WORDS_PER_CHUNK;
+        const base = wordOff + chunk * WORDS_PER_CHUNK;
+        // CHUNK_START belongs to block 0 and CHUNK_END to block 15, so the 16 iterations
+        // are run with a flags value that is constant per iteration rather than tested
         for (let block = 0; block < 16; block++) {
+            const flags = block === 0 ? CHUNK_START : block === 15 ? CHUNK_END : 0;
             const o = base + block * WORDS_PER_BLOCK;
             const m0 = words[o], m1 = words[o + 1], m2 = words[o + 2], m3 = words[o + 3];
             const m4 = words[o + 4], m5 = words[o + 5], m6 = words[o + 6], m7 = words[o + 7];
             const m8 = words[o + 8], m9 = words[o + 9], m10 = words[o + 10], m11 = words[o + 11];
             const m12 = words[o + 12], m13 = words[o + 13], m14 = words[o + 14], m15 = words[o + 15];
-            // CHUNK_START on the first block, CHUNK_END on the last: branch free
-            const flags = (block === 0 ? CHUNK_START : 0) | (block === 15 ? CHUNK_END : 0);
             let v0 = h0, v1 = h1, v2 = h2, v3 = h3, v4 = h4, v5 = h5, v6 = h6, v7 = h7;
             let v8 = IV0, v9 = IV1, v10 = IV2, v11 = IV3;
             let v12 = counterLow, v13 = counterHigh, v14 = 64, v15 = flags;
@@ -158,8 +161,13 @@ export function parentCV(cvs, left, right, out, outAt, root) {
 
 API = '''
 // Scratch reused across calls: a 4 MiB chunk is 4096 chunk CVs of 8 words.
-let cvScratch = new Uint32Array(4096 * 8);
-const resultWords = new Uint32Array(8);
+//
+// Int32Array rather than Uint32Array throughout: a Uint32Array load of a word with the
+// top bit set is a value above 2^31, which JS can only represent as a double, so every
+// such load boxes and every store unboxes. Int32 arithmetic with |0 gives bit-identical
+// results and stays in tagged integers. This is worth ~3x in Firefox.
+let cvScratch = new Int32Array(4096 * 8);
+const resultWords = new Int32Array(8);
 
 /**
  * The chaining value of one aligned, power-of-two subtree: the call an upload makes per
@@ -182,9 +190,9 @@ function subtreeWith(hashChunks, bytes, chunkIndex) {
     if ((bytes.byteOffset & 3) !== 0)
         throw new Error("fast path wants a 4 byte aligned view");
 
-    const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length >>> 2);
+    const words = new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >>> 2);
     if (cvScratch.length < chunks * 8)
-        cvScratch = new Uint32Array(chunks * 8);
+        cvScratch = new Int32Array(chunks * 8);
     hashChunks(words, 0, chunks, chunkIndex, cvScratch);
 
     // merge in place, level by level, the last merge being a parent (not root: this is a
@@ -208,7 +216,7 @@ export function mergeRoot(leftCV, rightCV) {
     return merge(leftCV, rightCV, true);
 }
 
-const mergeScratch = new Uint32Array(16);
+const mergeScratch = new Int32Array(16);
 
 function merge(leftCV, rightCV, root) {
     bytesToWords(leftCV, mergeScratch, 0);
@@ -243,7 +251,7 @@ SMALL = """
 // own per-block function rather than inside the chunk loop. Firefox was 3.4x slower than
 // Chromium on the big version, which looks like a limit on how large a function the
 // engine will fully optimise; this measures that rather than guessing.
-const blockOut = new Uint32Array(8);
+const blockOut = new Int32Array(8);
 
 function compressBlock(h0, h1, h2, h3, h4, h5, h6, h7,
                        m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15,
@@ -289,9 +297,195 @@ export function subtreeCVSmall(bytes, chunkIndex) {
 """
 
 
+def permutation_swaps(indent):
+    """In-place message permutation, as two variable cycles. Derived from
+    MSG_PERMUTATION rather than copied: new[i] = old[MSG_PERMUTATION[i]]."""
+    seen, cycles = set(), []
+    for start in range(16):
+        if start in seen:
+            continue
+        cyc, seen_next = [start], MSG_PERMUTATION[start]
+        seen.add(start)
+        while seen_next != start:
+            cyc.append(seen_next)
+            seen.add(seen_next)
+            seen_next = MSG_PERMUTATION[seen_next]
+        if len(cyc) > 1:
+            cycles.append(cyc)
+    p = " " * indent
+    lines = []
+    for n, cyc in enumerate(cycles):
+        lines.append(f"{p}const t{n} = m{cyc[0]};")
+        for a, b in zip(cyc, cyc[1:]):
+            lines.append(f"{p}m{a} = m{b};")
+        lines.append(f"{p}m{cyc[-1]} = t{n};")
+    return "\n".join(lines)
+
+
+LOOP7 = """
+// A third shape: one round body inside a loop of 7, with the permutation applied by
+// swapping the message variables - the shape the write-up ends on. About a seventh of the
+// code of chunkCVs, which matters if an engine will not fully optimise a huge function.
+export function chunkCVsLoop(words, wordOff, chunks, counterStart, out) {
+    let outAt = 0;
+    for (let chunk = 0; chunk < chunks; chunk++) {
+        const counterLow = (counterStart + chunk) >>> 0;
+        const counterHigh = Math.floor((counterStart + chunk) / 4294967296) >>> 0;
+        let h0 = IV0, h1 = IV1, h2 = IV2, h3 = IV3, h4 = IV4, h5 = IV5, h6 = IV6, h7 = IV7;
+        const base = wordOff + chunk * WORDS_PER_CHUNK;
+        for (let block = 0; block < 16; block++) {
+            const flags = block === 0 ? CHUNK_START : block === 15 ? CHUNK_END : 0;
+            const o = base + block * WORDS_PER_BLOCK;
+            let m0 = words[o], m1 = words[o + 1], m2 = words[o + 2], m3 = words[o + 3];
+            let m4 = words[o + 4], m5 = words[o + 5], m6 = words[o + 6], m7 = words[o + 7];
+            let m8 = words[o + 8], m9 = words[o + 9], m10 = words[o + 10], m11 = words[o + 11];
+            let m12 = words[o + 12], m13 = words[o + 13], m14 = words[o + 14], m15 = words[o + 15];
+            let v0 = h0, v1 = h1, v2 = h2, v3 = h3, v4 = h4, v5 = h5, v6 = h6, v7 = h7;
+            let v8 = IV0, v9 = IV1, v10 = IV2, v11 = IV3;
+            let v12 = counterLow, v13 = counterHigh, v14 = 64, v15 = flags;
+            for (let r = 0; r < 7; r++) {
+%s
+                if (r !== 6) {
+%s
+                }
+            }
+            h0 = v0 ^ v8; h1 = v1 ^ v9; h2 = v2 ^ v10; h3 = v3 ^ v11;
+            h4 = v4 ^ v12; h5 = v5 ^ v13; h6 = v6 ^ v14; h7 = v7 ^ v15;
+        }
+        out[outAt] = h0; out[outAt + 1] = h1; out[outAt + 2] = h2; out[outAt + 3] = h3;
+        out[outAt + 4] = h4; out[outAt + 5] = h5; out[outAt + 6] = h6; out[outAt + 7] = h7;
+        outAt += 8;
+    }
+}
+
+/** subtreeCV using the looped shape, for the same comparison. */
+export function subtreeCVLoop(bytes, chunkIndex) {
+    return subtreeWith(chunkCVsLoop, bytes, chunkIndex);
+}
+"""
+
+
+MEM = """
+// A fourth shape: the message words are not held in locals at all, but read from the
+// typed array at each use. The permutation is resolved at generation time, so every index
+// is a constant. This trades 16 live locals for 7 loads per word - worth measuring where
+// register pressure, not load count, is the limit.
+export function chunkCVsMem(words, wordOff, chunks, counterStart, out) {
+    let outAt = 0;
+    for (let chunk = 0; chunk < chunks; chunk++) {
+        const counterLow = (counterStart + chunk) >>> 0;
+        const counterHigh = Math.floor((counterStart + chunk) / 4294967296) >>> 0;
+        let h0 = IV0, h1 = IV1, h2 = IV2, h3 = IV3, h4 = IV4, h5 = IV5, h6 = IV6, h7 = IV7;
+        const base = wordOff + chunk * WORDS_PER_CHUNK;
+        for (let block = 0; block < 16; block++) {
+            const flags = block === 0 ? CHUNK_START : block === 15 ? CHUNK_END : 0;
+            const o = base + block * WORDS_PER_BLOCK;
+            let v0 = h0, v1 = h1, v2 = h2, v3 = h3, v4 = h4, v5 = h5, v6 = h6, v7 = h7;
+            let v8 = IV0, v9 = IV1, v10 = IV2, v11 = IV3;
+            let v12 = counterLow, v13 = counterHigh, v14 = 64, v15 = flags;
+%s
+            h0 = v0 ^ v8; h1 = v1 ^ v9; h2 = v2 ^ v10; h3 = v3 ^ v11;
+            h4 = v4 ^ v12; h5 = v5 ^ v13; h6 = v6 ^ v14; h7 = v7 ^ v15;
+        }
+        out[outAt] = h0; out[outAt + 1] = h1; out[outAt + 2] = h2; out[outAt + 3] = h3;
+        out[outAt + 4] = h4; out[outAt + 5] = h5; out[outAt + 6] = h6; out[outAt + 7] = h7;
+        outAt += 8;
+    }
+}
+
+/** subtreeCV reading message words from memory, for the same comparison. */
+export function subtreeCVMem(bytes, chunkIndex) {
+    return subtreeWith(chunkCVsMem, bytes, chunkIndex);
+}
+"""
+
+
+def interleaved_rounds(indent):
+    """Two independent chunks' rounds, interleaved statement by statement.
+
+    Each block depends on the one before it, so a single chunk is a long dependency
+    chain and the processor stalls on it. Two chunks are independent, so interleaving
+    them gives it something to do in the gaps. This is the scalar form of what the
+    wasm SIMD build does with lanes."""
+    lanes = []
+    for lane in ("a", "b"):
+        text = rounds(indent, msg=lambda i, lane=lane: f"{lane}m{i}")
+        # rename the state variables per lane. A word boundary regex, not str.replace:
+        # replacing "v1" textually also hits the "v1" inside an already renamed "av12".
+        text = re.sub(r"\bv(\d+)\b", lane + r"v\1", text)
+        lanes.append([l for l in text.split("\n") if l.strip() and "// round" not in l])
+    assert len(lanes[0]) == len(lanes[1])
+    out = []
+    for x, y in zip(*lanes):
+        out.append(x)
+        out.append(y)
+    return "\n".join(out)
+
+
+X2 = """
+// A fifth shape: two chunks hashed at once, their rounds interleaved.
+export function chunkCVsX2(words, wordOff, chunks, counterStart, out) {
+    let outAt = 0;
+    for (let chunk = 0; chunk + 1 < chunks; chunk += 2) {
+        const aCounterLow = (counterStart + chunk) >>> 0;
+        const bCounterLow = (counterStart + chunk + 1) >>> 0;
+        const counterHigh = Math.floor((counterStart + chunk) / 4294967296) >>> 0;
+        let ah0 = IV0, ah1 = IV1, ah2 = IV2, ah3 = IV3, ah4 = IV4, ah5 = IV5, ah6 = IV6, ah7 = IV7;
+        let bh0 = IV0, bh1 = IV1, bh2 = IV2, bh3 = IV3, bh4 = IV4, bh5 = IV5, bh6 = IV6, bh7 = IV7;
+        const aBase = wordOff + chunk * WORDS_PER_CHUNK;
+        const bBase = aBase + WORDS_PER_CHUNK;
+        for (let block = 0; block < 16; block++) {
+            const flags = block === 0 ? CHUNK_START : block === 15 ? CHUNK_END : 0;
+            const ao = aBase + block * WORDS_PER_BLOCK;
+            const bo = bBase + block * WORDS_PER_BLOCK;
+            const am0 = words[ao], am1 = words[ao + 1], am2 = words[ao + 2], am3 = words[ao + 3];
+            const am4 = words[ao + 4], am5 = words[ao + 5], am6 = words[ao + 6], am7 = words[ao + 7];
+            const am8 = words[ao + 8], am9 = words[ao + 9], am10 = words[ao + 10], am11 = words[ao + 11];
+            const am12 = words[ao + 12], am13 = words[ao + 13], am14 = words[ao + 14], am15 = words[ao + 15];
+            const bm0 = words[bo], bm1 = words[bo + 1], bm2 = words[bo + 2], bm3 = words[bo + 3];
+            const bm4 = words[bo + 4], bm5 = words[bo + 5], bm6 = words[bo + 6], bm7 = words[bo + 7];
+            const bm8 = words[bo + 8], bm9 = words[bo + 9], bm10 = words[bo + 10], bm11 = words[bo + 11];
+            const bm12 = words[bo + 12], bm13 = words[bo + 13], bm14 = words[bo + 14], bm15 = words[bo + 15];
+            let av0 = ah0, av1 = ah1, av2 = ah2, av3 = ah3, av4 = ah4, av5 = ah5, av6 = ah6, av7 = ah7;
+            let av8 = IV0, av9 = IV1, av10 = IV2, av11 = IV3;
+            let av12 = aCounterLow, av13 = counterHigh, av14 = 64, av15 = flags;
+            let bv0 = bh0, bv1 = bh1, bv2 = bh2, bv3 = bh3, bv4 = bh4, bv5 = bh5, bv6 = bh6, bv7 = bh7;
+            let bv8 = IV0, bv9 = IV1, bv10 = IV2, bv11 = IV3;
+            let bv12 = bCounterLow, bv13 = counterHigh, bv14 = 64, bv15 = flags;
+%s
+            ah0 = av0 ^ av8; ah1 = av1 ^ av9; ah2 = av2 ^ av10; ah3 = av3 ^ av11;
+            ah4 = av4 ^ av12; ah5 = av5 ^ av13; ah6 = av6 ^ av14; ah7 = av7 ^ av15;
+            bh0 = bv0 ^ bv8; bh1 = bv1 ^ bv9; bh2 = bv2 ^ bv10; bh3 = bv3 ^ bv11;
+            bh4 = bv4 ^ bv12; bh5 = bv5 ^ bv13; bh6 = bv6 ^ bv14; bh7 = bv7 ^ bv15;
+        }
+        out[outAt] = ah0; out[outAt + 1] = ah1; out[outAt + 2] = ah2; out[outAt + 3] = ah3;
+        out[outAt + 4] = ah4; out[outAt + 5] = ah5; out[outAt + 6] = ah6; out[outAt + 7] = ah7;
+        out[outAt + 8] = bh0; out[outAt + 9] = bh1; out[outAt + 10] = bh2; out[outAt + 11] = bh3;
+        out[outAt + 12] = bh4; out[outAt + 13] = bh5; out[outAt + 14] = bh6; out[outAt + 15] = bh7;
+        outAt += 16;
+    }
+    // an odd chunk at the end, if any
+    if (chunks & 1)
+        chunkCVs(words, wordOff + (chunks - 1) * WORDS_PER_CHUNK, 1, counterStart + chunks - 1,
+            out.subarray(outAt));
+}
+
+/** subtreeCV hashing two chunks at a time. */
+export function subtreeCVX2(bytes, chunkIndex) {
+    return subtreeWith(chunkCVsX2, bytes, chunkIndex);
+}
+"""
+
+
 def main():
     import os
-    out = HEADER + chunk_function() + parent_function() + API + (SMALL % rounds(4))
+    one_round = "\n".join(
+        g(a, b, c, d, f"m{2 * q}", f"m{2 * q + 1}", 16)
+        for q, (a, b, c, d) in enumerate(QUARTETS))
+    out = (HEADER + chunk_function() + parent_function() + API + (SMALL % rounds(4))
+           + (LOOP7 % (one_round, permutation_swaps(20)))
+           + (MEM % rounds(12, msg=lambda i: f"words[o + {i}]"))
+           + (X2 % interleaved_rounds(12)))
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "src", "blake3-fast.js")
     with open(path, "w") as f:

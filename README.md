@@ -17,6 +17,24 @@ Generated offline and committed, **not** `new Function()` at load time: runtime 
 generation is exactly what would force `unsafe-eval` into the CSP, and staying out of the
 CSP is one of pure JS's two advantages.
 
+Firefox runs this code about 3x slower than Chromium, so five shapes of the same
+algorithm were generated and measured to find out why. None of them closed the gap, and
+the generator still emits all five so the comparison can be re-run:
+
+| shape | what changes | Firefox | Chromium |
+|---|---|---|---|
+| `chunkCVs` (used) | 7 rounds unrolled, message words in locals | **246 MiB/s** | **784 MiB/s** |
+| `chunkCVsMem` | message words read from the array at each use | 244 | 788 |
+| `chunkCVsX2` | two chunks interleaved, to break the dependency chain | 242 | 662 |
+| `chunkCVsLoop` | one round in a loop of 7, permutation by variable swaps | 195 | 301 |
+| `chunkCVsSmall` | the rounds behind a per-block function call | 190 | 173 |
+
+So it is neither function size, nor register pressure, nor dependency-chain latency:
+V8 and SpiderMonkey simply generate very different code for the same integer work.
+Switching the typed arrays from `Uint32Array` to `Int32Array`, so no loaded word is ever
+above 2^31 and has to become a double, was also within noise. Finding the remaining 3x
+would need a look at SpiderMonkey's own output rather than another JS shape.
+
 ## Measured
 
 Every row hashes **4 MiB**, so latencies compare directly as well as rates. Run to run
@@ -31,9 +49,8 @@ these vary by about 10%.
 | wasm, `+simd128` flag only | 6.8 ms - 587 MiB/s | 5.9 ms - 677 MiB/s |
 | wasm kernel only, no copy | 6.9 ms - 580 MiB/s | 5.8 ms - 690 MiB/s |
 | wasm copy into linear memory alone | 0.1 ms | 0.1 ms |
-| **optimised JS** | 18.6 ms - **215 MiB/s** | 5.2 ms - **777 MiB/s** |
-| optimised JS, small-function shape | 22.9 ms - 175 MiB/s | 21.2 ms - 189 MiB/s |
-| readable JS | 29.7 ms - 135 MiB/s | 33.7 ms - 119 MiB/s |
+| **optimised JS** | 16.3 ms - **246 MiB/s** | 5.1 ms - **784 MiB/s** |
+| readable JS | 30.1 ms - 133 MiB/s | 33.8 ms - 118 MiB/s |
 
 At 5 MiB sha256 measures 814 MiB/s (Firefox) and 1033 (Chromium), so the rate hardly
 moves with input size.

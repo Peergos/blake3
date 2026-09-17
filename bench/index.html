@@ -73,6 +73,9 @@ try {
     row(await measure("blake3-subtree", 4 * MiB, 10, 2, 1));
     row(await measure("blake3-fast", 4 * MiB, 20, 3, 1));
     row(await measure("blake3-fast-small", 4 * MiB, 20, 3, 1));
+    row(await measure("blake3-fast-loop", 4 * MiB, 20, 3, 1));
+    row(await measure("blake3-fast-mem", 4 * MiB, 20, 3, 1));
+    row(await measure("blake3-fast-x2", 4 * MiB, 20, 3, 1));
     say("");
     say("same size as the baseline, for a like-for-like rate:");
     row(await measure("blake3-oneshot", 5 * MiB, 10, 2, 1));

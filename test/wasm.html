@@ -54,6 +54,12 @@ try {
             toHex(fast.subtreeCV(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
         check("fast-small subtree " + chunks + " chunks at " + index,
             toHex(fast.subtreeCVSmall(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
+        check("fast-loop subtree " + chunks + " chunks at " + index,
+            toHex(fast.subtreeCVLoop(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
+        check("fast-mem subtree " + chunks + " chunks at " + index,
+            toHex(fast.subtreeCVMem(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
+        check("fast-x2 subtree " + chunks + " chunks at " + index,
+            toHex(fast.subtreeCVX2(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
     }
     {
         // and the merges, including the root one that makes the file hash

@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>profile target</title>
+<body style="font: 14px monospace; padding: 16px">
+<pre id="out">hashing…</pre>
+<script type="module">
+// A long single-threaded run of one shape, so a sampling profiler has something to see.
+// Which shape, and for how long, come from the query string.
+import * as fast from "../src/blake3-fast.js";
+
+const params = new URLSearchParams(location.search);
+const shape = params.get("shape") || "fast";
+const seconds = Number(params.get("seconds") || 8);
+const fn = { fast: fast.subtreeCV, mem: fast.subtreeCVMem, loop: fast.subtreeCVLoop,
+             small: fast.subtreeCVSmall, x2: fast.subtreeCVX2,
+             b16: fast.subtreeCVBlocks16, b2: fast.subtreeCVB2, b4: fast.subtreeCVB4 }[shape];
+
+const bytes = new Uint8Array(4 * 1024 * 1024);
+let x = 1;
+for (let i = 0; i < bytes.length; i++) {
+    x ^= x << 13; x ^= x >>> 17; x ^= x << 5; x |= 0;
+    bytes[i] = x & 0xff;
+}
+
+const out = document.getElementById("out");
+const deadline = performance.now() + seconds * 1000;
+let runs = 0;
+const t0 = performance.now();
+while (performance.now() < deadline) {
+    fn(bytes, 0);
+    runs++;
+}
+const took = performance.now() - t0;
+out.textContent = shape + ": " + runs + " x 4MiB in " + (took / 1000).toFixed(1) + "s = "
+    + (runs * 4 / (took / 1000)).toFixed(0) + " MiB/s";
+window.__results = { shape, runs, mibs: runs * 4 / (took / 1000) };
+</script>
+</body>

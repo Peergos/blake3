@@ -2,7 +2,7 @@
 // candidate that must first copy the bytes somewhere pays for that here.
 import { subtreeCV, hash, CHUNK_LEN } from "../src/blake3.js";
 import { load } from "./wasm.js";
-import { subtreeCV as fastSubtreeCV, subtreeCVSmall, subtreeCVLoop, subtreeCVMem, subtreeCVX2 } from "../src/blake3-fast.js";
+import { subtreeCV as fastSubtreeCV, subtreeCVSmall, subtreeCVLoop, subtreeCVMem, subtreeCVX2, subtreeCVBlocks16, subtreeCVB2, subtreeCVB4 } from "../src/blake3-fast.js";
 
 let wasm = {};
 async function wasmFor(variant) {
@@ -52,6 +52,18 @@ async function once(mode, bytes) {
     }
     if (mode === "blake3-fast-x2") {
         subtreeCVX2(bytes, 0);
+        return;
+    }
+    if (mode === "blake3-fast-b16") {
+        subtreeCVBlocks16(bytes, 0);
+        return;
+    }
+    if (mode === "blake3-fast-b2") {
+        subtreeCVB2(bytes, 0);
+        return;
+    }
+    if (mode === "blake3-fast-b4") {
+        subtreeCVB4(bytes, 0);
         return;
     }
     if (mode === "blake3-oneshot") {

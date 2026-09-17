@@ -477,6 +477,94 @@ export function subtreeCVX2(bytes, chunkIndex) {
 """
 
 
+BLOCKS16 = """
+// A sixth shape: the 16 block loop of a chunk is unrolled too, so a chunk is one
+// straight-line run of 16 x 7 rounds. V8 gains 2.6x from unrolling the rounds where
+// SpiderMonkey gains 1.26x, which is what an engine that unrolls the block loop itself
+// would look like - so this does it by hand and measures.
+export function chunkCVsBlocks16(words, wordOff, chunks, counterStart, out) {
+    let outAt = 0;
+    for (let chunk = 0; chunk < chunks; chunk++) {
+        const counterLow = (counterStart + chunk) >>> 0;
+        const counterHigh = Math.floor((counterStart + chunk) / 4294967296) >>> 0;
+        let h0 = IV0, h1 = IV1, h2 = IV2, h3 = IV3, h4 = IV4, h5 = IV5, h6 = IV6, h7 = IV7;
+        const base = wordOff + chunk * WORDS_PER_CHUNK;
+%s
+        out[outAt] = h0; out[outAt + 1] = h1; out[outAt + 2] = h2; out[outAt + 3] = h3;
+        out[outAt + 4] = h4; out[outAt + 5] = h5; out[outAt + 6] = h6; out[outAt + 7] = h7;
+        outAt += 8;
+    }
+}
+
+/** subtreeCV with both loops unrolled. */
+export function subtreeCVBlocks16(bytes, chunkIndex) {
+    return subtreeWith(chunkCVsBlocks16, bytes, chunkIndex);
+}
+"""
+
+
+def sixteen_blocks(indent):
+    """All 16 blocks of a chunk, unrolled, each with its 7 unrolled rounds."""
+    p = " " * indent
+    out = []
+    for block in range(16):
+        flags = 1 if block == 0 else (2 if block == 15 else 0)
+        out.append(f"{p}// block {block}")
+        out.append(f"{p}{{")
+        out.append(f"{p}    const o = base + {block * 16};")
+        out.append(f"{p}    let v0 = h0, v1 = h1, v2 = h2, v3 = h3, v4 = h4, v5 = h5, v6 = h6, v7 = h7;")
+        out.append(f"{p}    let v8 = IV0, v9 = IV1, v10 = IV2, v11 = IV3;")
+        out.append(f"{p}    let v12 = counterLow, v13 = counterHigh, v14 = 64, v15 = {flags};")
+        out.append(rounds(indent + 4, msg=lambda i: f"words[o + {i}]"))
+        out.append(f"{p}    h0 = v0 ^ v8; h1 = v1 ^ v9; h2 = v2 ^ v10; h3 = v3 ^ v11;")
+        out.append(f"{p}    h4 = v4 ^ v12; h5 = v5 ^ v13; h6 = v6 ^ v14; h7 = v7 ^ v15;")
+        out.append(f"{p}}}")
+    return "\n".join(out)
+
+
+def blocks_k(k, indent):
+    """`k` blocks per loop iteration, unrolled; the loop runs 16/k times."""
+    p = " " * indent
+    out = [f"{p}for (let block = 0; block < 16; block += {k}) {{"]
+    for j in range(k):
+        out.append(f"{p}    {{")
+        out.append(f"{p}        const o = base + (block + {j}) * WORDS_PER_BLOCK;")
+        out.append(f"{p}        const flags = block + {j} === 0 ? CHUNK_START : block + {j} === 15 ? CHUNK_END : 0;")
+        out.append(f"{p}        let v0 = h0, v1 = h1, v2 = h2, v3 = h3, v4 = h4, v5 = h5, v6 = h6, v7 = h7;")
+        out.append(f"{p}        let v8 = IV0, v9 = IV1, v10 = IV2, v11 = IV3;")
+        out.append(f"{p}        let v12 = counterLow, v13 = counterHigh, v14 = 64, v15 = flags;")
+        out.append(rounds(indent + 8, msg=lambda i: f"words[o + {i}]"))
+        out.append(f"{p}        h0 = v0 ^ v8; h1 = v1 ^ v9; h2 = v2 ^ v10; h3 = v3 ^ v11;")
+        out.append(f"{p}        h4 = v4 ^ v12; h5 = v5 ^ v13; h6 = v6 ^ v14; h7 = v7 ^ v15;")
+        out.append(f"{p}    }}")
+    out.append(f"{p}}}")
+    return "\n".join(out)
+
+
+BLOCKS_K = """
+// Shapes between one block per iteration and all sixteen: unrolling the block loop by %d.
+// There is a cliff - at sixteen the script is too large for the optimising JIT and falls
+// back to baseline, 60x slower - so the useful question is where the peak is before it.
+export function chunkCVsB%d(words, wordOff, chunks, counterStart, out) {
+    let outAt = 0;
+    for (let chunk = 0; chunk < chunks; chunk++) {
+        const counterLow = (counterStart + chunk) >>> 0;
+        const counterHigh = Math.floor((counterStart + chunk) / 4294967296) >>> 0;
+        let h0 = IV0, h1 = IV1, h2 = IV2, h3 = IV3, h4 = IV4, h5 = IV5, h6 = IV6, h7 = IV7;
+        const base = wordOff + chunk * WORDS_PER_CHUNK;
+%s
+        out[outAt] = h0; out[outAt + 1] = h1; out[outAt + 2] = h2; out[outAt + 3] = h3;
+        out[outAt + 4] = h4; out[outAt + 5] = h5; out[outAt + 6] = h6; out[outAt + 7] = h7;
+        outAt += 8;
+    }
+}
+
+export function subtreeCVB%d(bytes, chunkIndex) {
+    return subtreeWith(chunkCVsB%d, bytes, chunkIndex);
+}
+"""
+
+
 def main():
     import os
     one_round = "\n".join(
@@ -485,7 +573,9 @@ def main():
     out = (HEADER + chunk_function() + parent_function() + API + (SMALL % rounds(4))
            + (LOOP7 % (one_round, permutation_swaps(20)))
            + (MEM % rounds(12, msg=lambda i: f"words[o + {i}]"))
-           + (X2 % interleaved_rounds(12)))
+           + (X2 % interleaved_rounds(12))
+           + (BLOCKS16 % sixteen_blocks(8))
+           + "".join((BLOCKS_K % (k, k, blocks_k(k, 8), k, k)) for k in (2, 4)))
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "src", "blake3-fast.js")
     with open(path, "w") as f:

@@ -17,23 +17,40 @@ Generated offline and committed, **not** `new Function()` at load time: runtime 
 generation is exactly what would force `unsafe-eval` into the CSP, and staying out of the
 CSP is one of pure JS's two advantages.
 
-Firefox runs this code about 3x slower than Chromium, so five shapes of the same
-algorithm were generated and measured to find out why. None of them closed the gap, and
-the generator still emits all five so the comparison can be re-run:
+Firefox runs this code about 3x slower than Chromium. Eight shapes of the same algorithm
+were generated and measured to find out why, and the JIT was profiled. None closed the
+gap. The generator still emits them all, so the comparison can be re-run:
 
 | shape | what changes | Firefox | Chromium |
 |---|---|---|---|
-| `chunkCVs` (used) | 7 rounds unrolled, message words in locals | **246 MiB/s** | **784 MiB/s** |
-| `chunkCVsMem` | message words read from the array at each use | 244 | 788 |
-| `chunkCVsX2` | two chunks interleaved, to break the dependency chain | 242 | 662 |
-| `chunkCVsLoop` | one round in a loop of 7, permutation by variable swaps | 195 | 301 |
-| `chunkCVsSmall` | the rounds behind a per-block function call | 190 | 173 |
+| `chunkCVs` (used) | 7 rounds unrolled, message words in locals | 249 MiB/s | 789 MiB/s |
+| `chunkCVsB2` | + the 16 block loop unrolled by 2 | **249** | **798** |
+| `chunkCVsB4` | + unrolled by 4 | **250** | 648 |
+| `chunkCVsMem` | message words read from the array at each use | 249 | 763 |
+| `chunkCVsX2` | two chunks interleaved, to break the dependency chain | 229 | 790 |
+| `chunkCVsLoop` | one round in a loop of 7, permutation by variable swaps | 198 | 298 |
+| `chunkCVsSmall` | the rounds behind a per-block function call | 193 | 170 |
+| `chunkCVsBlocks16` | the whole chunk, 16 blocks x 7 rounds, straight-line | 4 | 4 |
 
-So it is neither function size, nor register pressure, nor dependency-chain latency:
-V8 and SpiderMonkey simply generate very different code for the same integer work.
+`tools/profile.py` runs the Gecko profiler over a long single-threaded run and reports the
+JIT tier of every frame. What it shows:
+
+- **The code is fully Ion compiled**: 99.7% of samples in the working shapes are Ion
+  frames, 0.3% baseline. So the gap is not a tiering, bailout or deoptimisation problem -
+  Firefox is running optimised machine code and that code is simply ~3x slower.
+- **`chunkCVsBlocks16` falls off a cliff into baseline**: 99.1% of its samples are
+  baseline frames, because the function is too large for the optimising JIT to take. Both
+  engines do this, at 60x the cost. Any generated code has a size limit worth knowing
+  about, and the shapes above sit under it.
+- **No single operation explains it.** `bench/micro.html` times the integer operations in
+  isolation: Firefox is ~2x slower on dependent add and xor chains, ~1.4x on the rotate
+  idiom - and *faster* than Chromium on a g() mix (654 vs 473 Mops/s). The 3x only appears
+  in the full function.
+
 Switching the typed arrays from `Uint32Array` to `Int32Array`, so no loaded word is ever
-above 2^31 and has to become a double, was also within noise. Finding the remaining 3x
-would need a look at SpiderMonkey's own output rather than another JS shape.
+above 2^31 and has to become a double, was within noise. So the remaining difference is
+in how Ion and TurboFan compile this particular shape of integer code at scale, and no
+rearrangement of the JavaScript found a way round it.
 
 ## Measured
 
@@ -49,7 +66,7 @@ these vary by about 10%.
 | wasm, `+simd128` flag only | 6.8 ms - 587 MiB/s | 5.9 ms - 677 MiB/s |
 | wasm kernel only, no copy | 6.9 ms - 580 MiB/s | 5.8 ms - 690 MiB/s |
 | wasm copy into linear memory alone | 0.1 ms | 0.1 ms |
-| **optimised JS** | 16.3 ms - **246 MiB/s** | 5.1 ms - **784 MiB/s** |
+| **optimised JS** | 16.0 ms - **249 MiB/s** | 5.0 ms - **798 MiB/s** |
 | readable JS | 30.1 ms - 133 MiB/s | 33.8 ms - 118 MiB/s |
 
 At 5 MiB sha256 measures 814 MiB/s (Firefox) and 1033 (Chromium), so the rate hardly

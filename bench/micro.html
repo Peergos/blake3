@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>integer op microbenchmark</title>
+<body style="font: 14px monospace; padding: 16px">
+<pre id="out">running…</pre>
+<script type="module">
+// Which integer operation is Ion slower at? Each kernel does the same number of
+// dependent 32-bit ops in the same shape, differing only in which op.
+const N = 20000000;
+
+const kernels = {
+    add(x) { for (let i = 0; i < N; i++) x = (x + i) | 0; return x; },
+    xor(x) { for (let i = 0; i < N; i++) x ^= i; return x; },
+    shift_right(x) { for (let i = 0; i < N; i++) x = (x >>> 7) ^ i; return x; },
+    shift_left(x) { for (let i = 0; i < N; i++) x = (x << 7) ^ i; return x; },
+    // the rotate idiom blake3 uses, by a constant, four times per g()
+    rotate_const(x) { for (let i = 0; i < N; i++) { x ^= i; x = (x >>> 16) | (x << 16); } return x; },
+    rotate_12(x) { for (let i = 0; i < N; i++) { x ^= i; x = (x >>> 12) | (x << 20); } return x; },
+    // one full g() worth of work, the real mix
+    g_mix(x) {
+        let a = x, b = 1, c = 2, d = 3;
+        for (let i = 0; i < N / 4; i++) {
+            a = (a + b + i) | 0;
+            d ^= a; d = (d >>> 16) | (d << 16);
+            c = (c + d) | 0;
+            b ^= c; b = (b >>> 12) | (b << 20);
+        }
+        return a ^ b ^ c ^ d;
+    },
+    // typed array loads, to price the message reads
+    load(x) {
+        const arr = new Int32Array(4096);
+        for (let i = 0; i < N; i++) x ^= arr[i & 4095];
+        return x;
+    },
+};
+
+const out = document.getElementById("out");
+const results = {};
+const lines = [];
+for (const [name, fn] of Object.entries(kernels)) {
+    fn(1); // warm up and let it tier up
+    const t0 = performance.now();
+    const sink = fn(1);
+    const ms = performance.now() - t0;
+    const opsPerNs = (name === "g_mix" ? N : N) / (ms * 1e6);
+    results[name] = { ms, opsPerNs, sink };
+    lines.push(name.padEnd(14) + ms.toFixed(1).padStart(8) + " ms   "
+        + (opsPerNs * 1000).toFixed(0).padStart(6) + " Mops/s");
+    out.textContent = lines.join("\n");
+}
+window.__results = results;
+</script>
+</body>

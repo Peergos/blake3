@@ -192,7 +192,8 @@ def main():
     browser, page = sys.argv[1], sys.argv[2]
     timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 600
     httpd, port = serve()
-    pages = {"test": "test/", "bench": "bench/", "wasm": "test/wasm.html"}
+    pages = {"test": "test/", "bench": "bench/", "wasm": "test/wasm.html",
+             "micro": "bench/micro.html"}
     url = "http://127.0.0.1:%d/%s" % (port, pages.get(page, page))
     res = run_firefox(url, timeout) if browser == "firefox" else run_chromium(url, timeout)
     httpd.shutdown()

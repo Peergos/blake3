@@ -1,0 +1,116 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BLAKE3 fuzz</title>
+<body style="font: 14px monospace; padding: 16px">
+<pre id="out">fuzzing…</pre>
+<script type="module">
+import * as ref from "../src/blake3.js";
+import * as fast from "../src/blake3-fast.js";
+import { load } from "./wasm.js";
+
+const out = document.getElementById("out");
+const failures = [];
+let checks = 0;
+const hex = ref.toHex;
+
+const check = (impl, len, caseName, got, want) => {
+    checks++;
+    if (got !== want)
+        failures.push({ impl, len, case: caseName, got, want });
+};
+
+const wasms = {};
+for (const variant of ["scalar", "simd128", "simdfeature"])
+    wasms[variant] = await load("./wasm/blake3-" + variant + ".wasm");
+
+// every shape the generator emits, plus the readable reference and the wasm builds
+const subtreeImpls = {
+    "js-reference": ref.subtreeCV,
+    "js-fast": fast.subtreeCV,
+    "js-mem": fast.subtreeCVMem,
+    "js-x2": fast.subtreeCVX2,
+    "js-loop": fast.subtreeCVLoop,
+    "js-small": fast.subtreeCVSmall,
+    "js-b2": fast.subtreeCVB2,
+    "js-b4": fast.subtreeCVB4,
+    "js-b16": fast.subtreeCVBlocks16,
+    "wasm-scalar": (b, i) => wasms.scalar.subtreeCV(b, i),
+    "wasm-simd128": (b, i) => wasms.simd128.subtreeCV(b, i),
+    "wasm-simdfeature": (b, i) => wasms.simdfeature.subtreeCV(b, i),
+};
+
+const manifest = await (await fetch("./fuzz-data/manifest.json")).json();
+let done = 0;
+try {
+for (const entry of manifest) {
+    const bytes = new Uint8Array(await (await fetch("./fuzz-data/" + entry.name)).arrayBuffer());
+
+    // 1. whole input hash against b3sum, for every implementation that offers one
+    check("js-reference hash", entry.len, "", hex(ref.hash(bytes)), entry.b3sum);
+    for (const variant of ["scalar", "simd128", "simdfeature"])
+        if (bytes.length <= wasms[variant].capacity)
+            check("wasm-" + variant + " hash", entry.len, "",
+                hex(wasms[variant].hashAll(bytes)), entry.b3sum);
+
+    // 2. subtree chaining values: every implementation must agree with the reference
+    for (const c of entry.subtrees) {
+        const slice = bytes.subarray(c.index * 1024, (c.index + c.chunks) * 1024);
+        const want = hex(ref.subtreeCV(slice, c.index));
+        const name = "subtree " + c.chunks + " chunks at " + c.index;
+        for (const [impl, fn] of Object.entries(subtreeImpls)) {
+            // a subarray at a non multiple of 4 has no aligned Int32Array view; the fast
+            // shapes reject it by contract, so give them a copy as a worker would have
+            const input = (slice.byteOffset & 3) === 0 ? slice : slice.slice();
+            check(impl, entry.len, name, hex(fn(input, c.index)), want);
+        }
+    }
+
+    // 3. a whole file rebuilt from 4 MiB subtree CVs must equal b3sum, where the file is
+    //    an exact multiple of 4 MiB - the case the upload path relies on
+    const CHUNK = 4 * 1024 * 1024;
+    if (entry.len >= 2 * CHUNK && entry.len % CHUNK === 0) {
+        for (const [impl, fn] of [["js-fast", fast.subtreeCV], ["js-b2", fast.subtreeCVB2],
+                                  ["wasm-simdfeature", (b, i) => wasms.simdfeature.subtreeCV(b, i)]]) {
+            let level = [];
+            for (let off = 0; off < bytes.length; off += CHUNK)
+                level.push(fn(bytes.subarray(off, off + CHUNK), off / 1024));
+            while (level.length > 2) {
+                const next = [];
+                for (let i = 0; i < level.length; i += 2)
+                    next.push(ref.mergeNonRoot(level[i], level[i + 1]));
+                level = next;
+            }
+            check(impl + " merged", entry.len, "4MiB subtrees",
+                hex(ref.mergeRoot(level[0], level[1])), entry.b3sum);
+        }
+    }
+
+    // 4. the merges themselves agree across implementations
+    if (bytes.length >= 2048) {
+        const a = ref.subtreeCV(bytes.subarray(0, 1024), 0);
+        const b = ref.subtreeCV(bytes.subarray(1024, 2048), 1);
+        {
+            check("js-fast merge", entry.len, "non-root",
+                hex(fast.mergeNonRoot(a, b)), hex(ref.mergeNonRoot(a, b)));
+            check("wasm merge", entry.len, "non-root",
+                hex(wasms.simdfeature.mergeNonRoot(a, b)), hex(ref.mergeNonRoot(a, b)));
+            check("js-fast merge", entry.len, "root",
+                hex(fast.mergeRoot(a, b)), hex(ref.mergeRoot(a, b)));
+            check("wasm merge", entry.len, "root",
+                hex(wasms.simdfeature.mergeRoot(a, b)), hex(ref.mergeRoot(a, b)));
+        }
+    }
+
+    out.textContent = "file " + (++done) + "/" + manifest.length
+        + " (len " + entry.len + "), " + checks + " checks, " + failures.length + " failures";
+}
+
+} catch (e) {
+    // a throw is a result too: without this the page simply stops answering and the
+    // driver waits out its timeout with nothing to show for it
+    failures.push({ impl: "threw", len: "-", case: String((e && e.stack) || e), got: "-", want: "-" });
+}
+out.textContent = checks + " checks, " + failures.length + " failures";
+window.__results = { checks, failures };
+</script>
+</body>

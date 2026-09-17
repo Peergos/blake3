@@ -108,6 +108,11 @@ unminified.
 - `tools/browser.py` — runs a page headless in Firefox (Marionette, no driver needed) or
   Chromium (chromedriver) and prints what it produced.
 - `tools/crosscheck.py` — the b3sum comparison, driven through a browser.
+- `tools/fuzz.py` — random data at random lengths through every implementation, with
+  b3sum as the oracle for whole-input hashes and the readable reference as the oracle for
+  subtree chaining values. Lengths are weighted towards block and chunk boundaries.
+- `tools/profile.py` — runs the Gecko profiler over a long single-threaded run and reports
+  the JIT tier of every frame.
 
 ## Running it
 
@@ -116,6 +121,9 @@ python3 tools/browser.py firefox test        # js tests, in a browser
 python3 tools/browser.py firefox wasm        # wasm vs vectors and vs the js impl
 python3 tools/browser.py chromium bench      # the numbers above
 python3 tools/crosscheck.py firefox          # vs the b3sum binary
+python3 tools/fuzz.py 150 firefox            # fuzz everything, random seed
+python3 tools/fuzz.py 80 20260918 chromium   # ... or a fixed one, as CI does
+python3 tools/profile.py fast 8              # what the firefox jit did with it
 node test/node.mjs                           # js tests, no browser
 node test/b3sum.mjs                          # vs b3sum, no browser
 
@@ -133,6 +141,11 @@ cp target/wasm32-unknown-unknown/release/blake3_wasm.wasm ../bench/wasm/blake3-s
   indices including a 4 MiB subtree at offset 4 MiB.
 - `b3sum` agreement on random files at 0, 1, 1023, 1024, 1025, 4 MiB−1, 4 MiB, 4 MiB+1,
   8 MiB and 10 MiB bytes.
+- Fuzzing: 5677 checks over 168 MiB of random data at random lengths, in Firefox and
+  Chromium, with zero failures - every shape, every wasm build, whole-input hashes against
+  b3sum and subtree chaining values against the reference. The fuzzer was itself checked
+  by injecting a single wrong xor into one shape, which it caught in 21 of 305 checks
+  while reporting nothing against the others.
 - The property the whole approach rests on: an 8 MiB file hashed as two 4 MiB subtree
   chaining values and merged gives the same hash `b3sum` prints. That is what makes the
   stored root hash the file's real BLAKE3 hash rather than a tree of one's own.

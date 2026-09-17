@@ -36,6 +36,16 @@ jobs:
       # and the wasm build must agree with the js one, vectors and subtree calls alike
       - run: python3 tools/browser.py firefox wasm 300
 
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install b3sum --locked
+      # random data at random lengths, every implementation against b3sum. A fixed seed
+      # so a failure here can be reproduced exactly; run it locally without one to
+      # explore new inputs.
+      - run: python3 tools/fuzz.py 80 20260918 firefox
+
   generated-js:
     runs-on: ubuntu-latest
     steps:

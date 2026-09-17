@@ -1,3 +1,4 @@
 bench/crosscheck-data/
 node_modules/
 __pycache__/
+wasm/target/

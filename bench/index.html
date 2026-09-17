@@ -69,13 +69,27 @@ try {
     say("same size as the baseline, for a like-for-like rate:");
     row(await measure("blake3-oneshot", 5 * MiB, 10, 2, 1));
     say("");
+    say("reference crate compiled to wasm32, copy into linear memory included:");
+    row(await measure("wasm-scalar-copy", 4 * MiB, 20, 3, 1));
+    row(await measure("wasm-simd128-copy", 4 * MiB, 20, 3, 1));
+    row(await measure("wasm-simdfeature-copy", 4 * MiB, 20, 3, 1));
+    say("");
+    say("the same, kernel only, and the copy on its own - the copy is wasm's tax:");
+    row(await measure("wasm-simd128-nocopy", 4 * MiB, 20, 3, 1));
+    row(await measure("wasm-simd128-copyonly", 4 * MiB, 20, 3, 1));
+    say("");
     say("parallel, which is what HashTree.buildParallel already does:");
     for (const n of [2, 4, cores])
         row(await measure("blake3-subtree", 4 * MiB, 6, 1, n));
     say("");
+    for (const n of [2, 4, cores])
+        row(await measure("wasm-simdfeature-copy", 4 * MiB, 10, 2, n));
+    say("");
     say("sha256 in parallel, for the same comparison:");
     row(await measure("sha256", 5 * MiB, 20, 3, cores));
 
+    const wasmBest = results.rows.filter(r => r.mode.startsWith("wasm-") && r.mode.endsWith("-copy") && r.workers === 1)
+        .sort((a, b) => b.perWorkerMiBs - a.perWorkerMiBs)[0];
     const b3 = results.rows.find(r => r.mode === "blake3-subtree" && r.workers === 1);
     const sha = results.rows.find(r => r.mode === "sha256" && r.workers === 1);
     results.verdict = {
@@ -85,12 +99,20 @@ try {
         blake3BestAggregateMiBs: Math.max(...results.rows
             .filter(r => r.mode === "blake3-subtree").map(r => r.aggregateMiBs)),
         meetsTargetSingleThread: b3.perWorkerMiBs >= 742,
+        wasmSingleMiBs: wasmBest ? wasmBest.perWorkerMiBs : null,
+        wasmMode: wasmBest ? wasmBest.mode : null,
+        wasmMeetsTargetSingleThread: wasmBest ? wasmBest.perWorkerMiBs >= 742 : null,
     };
     say("");
     say("single thread: blake3 " + b3.perWorkerMiBs.toFixed(0) + " MiB/s vs sha256 "
         + sha.perWorkerMiBs.toFixed(0) + " MiB/s, ratio "
         + (b3.perWorkerMiBs / sha.perWorkerMiBs).toFixed(2) + "x");
-    say("target met single threaded: " + (results.verdict.meetsTargetSingleThread ? "yes" : "NO"));
+    say("target met single threaded, pure js: " + (results.verdict.meetsTargetSingleThread ? "yes" : "NO"));
+    if (wasmBest)
+        say("target met single threaded, wasm (" + wasmBest.mode + "): "
+            + (results.verdict.wasmMeetsTargetSingleThread ? "yes" : "NO")
+            + " at " + wasmBest.perWorkerMiBs.toFixed(0) + " MiB/s, "
+            + (wasmBest.perWorkerMiBs / sha.perWorkerMiBs).toFixed(2) + "x sha256");
     window.__results = results;
 } catch (e) {
     say("ERROR " + (e && e.stack || e));

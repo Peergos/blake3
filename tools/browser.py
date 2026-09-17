@@ -192,10 +192,11 @@ def main():
     browser, page = sys.argv[1], sys.argv[2]
     timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 600
     httpd, port = serve()
-    url = "http://127.0.0.1:%d/%s/" % (port, "test" if page == "test" else "bench")
+    pages = {"test": "test/", "bench": "bench/", "wasm": "test/wasm.html"}
+    url = "http://127.0.0.1:%d/%s" % (port, pages.get(page, page))
     res = run_firefox(url, timeout) if browser == "firefox" else run_chromium(url, timeout)
     httpd.shutdown()
-    if page == "test":
+    if page in ("test", "wasm"):
         sys.exit(0 if res.get("failed") == 0 else 1)
     print()
     print(json.dumps(res, indent=2))

@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BLAKE3 wasm tests</title>
+<body style="font: 14px monospace; padding: 16px">
+<pre id="out">running…</pre>
+<script type="module">
+import { load } from "../bench/wasm.js";
+import { hash as jsHash, subtreeCV as jsSubtreeCV, toHex, CHUNK_LEN } from "../src/blake3.js";
+
+const out = document.getElementById("out");
+const lines = [];
+const failures = [];
+let passed = 0;
+const check = (name, got, want) => { got === want ? passed++ : failures.push({name, got, want}); };
+
+function testInput(len) {
+    const b = new Uint8Array(len);
+    for (let i = 0; i < len; i++) b[i] = i % 251;
+    return b;
+}
+
+try {
+    const vectors = await (await fetch("./test_vectors.json")).json();
+    for (const variant of ["scalar", "simd128", "simdfeature"]) {
+        const w = await load("../bench/wasm/blake3-" + variant + ".wasm");
+        lines.push(variant + ": exports " + Object.keys(w.exports).sort().join(", "));
+        // the official vectors, through the wasm whole-input API
+        for (const c of vectors.cases) {
+            if (c.input_len > w.capacity) continue;
+            check(variant + " vector len=" + c.input_len, toHex(w.hashAll(testInput(c.input_len))), c.hash.slice(0, 64));
+        }
+        // the subtree API must agree with the JS one, chunk index and all
+        for (const [chunks, index] of [[1, 0], [1, 7], [2, 0], [2, 4], [4, 8], [4096, 0], [4096, 4096]]) {
+            const bytes = testInput(chunks * CHUNK_LEN);
+            check(variant + " subtree " + chunks + " chunks at " + index,
+                toHex(w.subtreeCV(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
+        }
+        // merges must agree too, including the root one
+        const a = testInput(4 * 1024 * 1024), b = testInput(4 * 1024 * 1024).reverse();
+        const cvA = w.subtreeCV(a, 0), cvB = w.subtreeCV(b, 4096);
+        const whole = new Uint8Array(8 * 1024 * 1024);
+        whole.set(a, 0); whole.set(b, a.length);
+        check(variant + " merge_root is the file hash", toHex(w.mergeRoot(cvA, cvB)), toHex(jsHash(whole)));
+        const cvA2 = w.subtreeCV(a, 0), cvB2 = w.subtreeCV(b, 4096);
+        check(variant + " merge_non_root agrees with js",
+            toHex(w.mergeNonRoot(cvA2, cvB2)), toHex((await import("../src/blake3.js")).mergeNonRoot(cvA2, cvB2)));
+    }
+    for (const f of failures)
+        lines.push("FAIL " + f.name + "\n  got  " + f.got + "\n  want " + f.want);
+    lines.push((failures.length === 0 ? "OK" : "FAILED") + ": " + passed + " passed, " + failures.length + " failed");
+    out.textContent = lines.join("\n");
+    window.__results = { passed, failed: failures.length, failures };
+} catch (e) {
+    out.textContent = "ERROR " + (e && e.stack || e);
+    window.__results = { passed, failed: 1, failures: [{ name: "threw", got: String(e), want: "-" }] };
+}
+</script>
+</body>

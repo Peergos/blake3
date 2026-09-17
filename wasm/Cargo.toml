@@ -1,0 +1,18 @@
+[package]
+name = "blake3-wasm"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+blake3 = { version = "1", default-features = false, features = ["wasm32_simd"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true

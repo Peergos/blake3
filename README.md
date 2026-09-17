@@ -1,4 +1,4 @@
-# JS and wasm BLAKE3 versus WebCrypto sha256?
+# JS and wasm BLAKE3 versus WebCrypto sha256
 
 ## Optimisations
 

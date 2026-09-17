@@ -5,6 +5,7 @@
 <pre id="out">running…</pre>
 <script type="module">
 import { load } from "../bench/wasm.js";
+import * as fast from "../src/blake3-fast.js";
 import { hash as jsHash, subtreeCV as jsSubtreeCV, toHex, CHUNK_LEN } from "../src/blake3.js";
 
 const out = document.getElementById("out");
@@ -44,6 +45,31 @@ try {
         const cvA2 = w.subtreeCV(a, 0), cvB2 = w.subtreeCV(b, 4096);
         check(variant + " merge_non_root agrees with js",
             toHex(w.mergeNonRoot(cvA2, cvB2)), toHex((await import("../src/blake3.js")).mergeNonRoot(cvA2, cvB2)));
+    }
+    // the optimised pure JS path must agree with the reference for every shape it accepts
+    lines.push("little endian: " + fast.LITTLE_ENDIAN);
+    for (const [chunks, index] of [[1, 0], [1, 3], [2, 0], [2, 6], [4, 4], [1024, 0], [4096, 0], [4096, 4096], [4096, 8192]]) {
+        const bytes = testInput(chunks * CHUNK_LEN);
+        check("fast subtree " + chunks + " chunks at " + index,
+            toHex(fast.subtreeCV(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
+        check("fast-small subtree " + chunks + " chunks at " + index,
+            toHex(fast.subtreeCVSmall(bytes, index)), toHex(jsSubtreeCV(bytes, index)));
+    }
+    {
+        // and the merges, including the root one that makes the file hash
+        const a = testInput(4 * 1024 * 1024), b = testInput(4 * 1024 * 1024).reverse();
+        const whole = new Uint8Array(8 * 1024 * 1024);
+        whole.set(a, 0); whole.set(b, a.length);
+        const cvA = fast.subtreeCV(a, 0), cvB = fast.subtreeCV(b, 4096);
+        check("fast merge_root is the file hash", toHex(fast.mergeRoot(cvA, cvB)), toHex(jsHash(whole)));
+        const ref = await import("../src/blake3.js");
+        check("fast merge_non_root agrees", toHex(fast.mergeNonRoot(cvA, cvB)), toHex(ref.mergeNonRoot(cvA, cvB)));
+        // an unaligned view must be refused, not silently wrong
+        const padded = new Uint8Array(1024 + 1);
+        try {
+            fast.subtreeCV(padded.subarray(1), 0);
+            failures.push({ name: "fast rejects unaligned view", got: "accepted", want: "rejected" });
+        } catch (e) { passed++; }
     }
     for (const f of failures)
         lines.push("FAIL " + f.name + "\n  got  " + f.got + "\n  want " + f.want);

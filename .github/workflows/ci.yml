@@ -36,6 +36,15 @@ jobs:
       # and the wasm build must agree with the js one, vectors and subtree calls alike
       - run: python3 tools/browser.py firefox wasm 300
 
+  generated-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # src/blake3-fast.js is generated: regenerating must produce exactly what is
+      # committed, or the generator and the file have drifted
+      - run: python3 tools/gen-fast.py
+      - run: git diff --exit-code src/blake3-fast.js || { echo "run tools/gen-fast.py and commit the result"; exit 1; }
+
   wasm-build:
     runs-on: ubuntu-latest
     steps:

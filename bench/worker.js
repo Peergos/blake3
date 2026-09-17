@@ -2,6 +2,7 @@
 // blake3.md requires: a candidate that must first copy the bytes somewhere pays for it.
 import { subtreeCV, hash, CHUNK_LEN } from "../src/blake3.js";
 import { load } from "./wasm.js";
+import { subtreeCV as fastSubtreeCV, subtreeCVSmall } from "../src/blake3-fast.js";
 
 let wasm = {};
 async function wasmFor(variant) {
@@ -33,6 +34,14 @@ async function once(mode, bytes) {
         subtreeCV(bytes, 0);
         return;
     }
+    if (mode === "blake3-fast") {
+        fastSubtreeCV(bytes, 0);
+        return;
+    }
+    if (mode === "blake3-fast-small") {
+        subtreeCVSmall(bytes, 0);
+        return;
+    }
     if (mode === "blake3-oneshot") {
         hash(bytes);
         return;
@@ -59,10 +68,13 @@ self.onmessage = async (e) => {
     for (let i = 0; i < warmup; i++)
         await once(mode, bytes);
     const times = [];
+    // loopStart is after warmup and after any module/wasm compilation, so the aggregate
+    // rate below is hashing throughput rather than worker startup
+    const loopStart = performance.now();
     for (let i = 0; i < runs; i++) {
         const t0 = performance.now();
         await once(mode, bytes);
         times.push(performance.now() - t0);
     }
-    self.postMessage({ times });
+    self.postMessage({ times, loopMs: performance.now() - loopStart });
 };

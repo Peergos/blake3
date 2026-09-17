@@ -18,16 +18,19 @@ const say = (line) => {
 function measure(mode, sizeBytes, runs, warmup, workers) {
     return new Promise((resolve, reject) => {
         const all = [];
+        const loops = [];
         let done = 0;
-        const started = performance.now();
         for (let w = 0; w < workers; w++) {
             const worker = new Worker("./worker.js", { type: "module" });
             worker.onerror = (e) => reject(new Error(mode + ": " + (e.message || "worker error")));
             worker.onmessage = (e) => {
                 all.push(...e.data.times);
+                loops.push(e.data.loopMs);
                 worker.terminate();
                 if (++done === workers) {
-                    const wall = performance.now() - started;
+                    // the slowest worker's hashing loop: what a parallel upload waits for,
+                    // without counting worker startup or module compilation
+                    const wall = Math.max(...loops);
                     all.sort((a, b) => a - b);
                     resolve({
                         mode, workers,
@@ -65,6 +68,8 @@ try {
     say("");
     say("pure JS blake3, the real workload (4 MiB subtree chaining value):");
     row(await measure("blake3-subtree", 4 * MiB, 10, 2, 1));
+    row(await measure("blake3-fast", 4 * MiB, 20, 3, 1));
+    row(await measure("blake3-fast-small", 4 * MiB, 20, 3, 1));
     say("");
     say("same size as the baseline, for a like-for-like rate:");
     row(await measure("blake3-oneshot", 5 * MiB, 10, 2, 1));
@@ -80,7 +85,7 @@ try {
     say("");
     say("parallel, which is what HashTree.buildParallel already does:");
     for (const n of [2, 4, cores])
-        row(await measure("blake3-subtree", 4 * MiB, 6, 1, n));
+        row(await measure("blake3-fast", 4 * MiB, 8, 2, n));
     say("");
     for (const n of [2, 4, cores])
         row(await measure("wasm-simdfeature-copy", 4 * MiB, 10, 2, n));
@@ -90,6 +95,7 @@ try {
 
     const wasmBest = results.rows.filter(r => r.mode.startsWith("wasm-") && r.mode.endsWith("-copy") && r.workers === 1)
         .sort((a, b) => b.perWorkerMiBs - a.perWorkerMiBs)[0];
+    const fastRow = results.rows.find(r => r.mode === "blake3-fast" && r.workers === 1);
     const b3 = results.rows.find(r => r.mode === "blake3-subtree" && r.workers === 1);
     const sha = results.rows.find(r => r.mode === "sha256" && r.workers === 1);
     results.verdict = {
@@ -102,12 +108,22 @@ try {
         wasmSingleMiBs: wasmBest ? wasmBest.perWorkerMiBs : null,
         wasmMode: wasmBest ? wasmBest.mode : null,
         wasmMeetsTargetSingleThread: wasmBest ? wasmBest.perWorkerMiBs >= 742 : null,
+        fastJsSingleMiBs: fastRow ? fastRow.perWorkerMiBs : null,
+        fastJsMeetsTargetSingleThread: fastRow ? fastRow.perWorkerMiBs >= 742 : null,
+        fastJsBestAggregateMiBs: Math.max(...results.rows
+            .filter(r => r.mode === "blake3-fast").map(r => r.aggregateMiBs)),
     };
     say("");
     say("single thread: blake3 " + b3.perWorkerMiBs.toFixed(0) + " MiB/s vs sha256 "
         + sha.perWorkerMiBs.toFixed(0) + " MiB/s, ratio "
         + (b3.perWorkerMiBs / sha.perWorkerMiBs).toFixed(2) + "x");
-    say("target met single threaded, pure js: " + (results.verdict.meetsTargetSingleThread ? "yes" : "NO"));
+    say("target met single threaded, readable js: " + (results.verdict.meetsTargetSingleThread ? "yes" : "NO"));
+    if (fastRow)
+        say("target met single threaded, optimised js: "
+            + (results.verdict.fastJsMeetsTargetSingleThread ? "yes" : "NO")
+            + " at " + fastRow.perWorkerMiBs.toFixed(0) + " MiB/s, "
+            + (fastRow.perWorkerMiBs / sha.perWorkerMiBs).toFixed(2) + "x sha256, "
+            + (fastRow.perWorkerMiBs / b3.perWorkerMiBs).toFixed(2) + "x the readable one");
     if (wasmBest)
         say("target met single threaded, wasm (" + wasmBest.mode + "): "
             + (results.verdict.wasmMeetsTargetSingleThread ? "yes" : "NO")

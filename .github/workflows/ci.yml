@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # the official BLAKE3 vectors, plus the subtree properties the peergos plan needs
+      - run: node test/node.mjs
+
+  b3sum-agreement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # an independent check: the hash we compute is what the reference binary prints,
+      # including a file rebuilt from merged 4MiB subtree chaining values
+      - run: cargo install b3sum --locked
+      - run: node test/b3sum.mjs
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # the tests have to pass in a browser too: that is where this code will run
+      - run: python3 tools/browser.py firefox test 300

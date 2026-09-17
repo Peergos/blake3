@@ -1,0 +1,10 @@
+{
+  "name": "peergos-blake3-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 spike: can a browser BLAKE3 match WebCrypto sha256?",
+  "scripts": {
+    "test": "node test/node.mjs"
+  }
+}

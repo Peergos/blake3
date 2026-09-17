@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BLAKE3 vs b3sum</title>
+<body style="font: 14px monospace; padding: 16px">
+<pre id="out">hashing…</pre>
+<script type="module">
+import { hash, subtreeCV, mergeNonRoot, mergeRoot, toHex, CHUNK_LEN } from "../src/blake3.js";
+
+const CHUNK = 4 * 1024 * 1024;
+
+/** Merge 4MiB subtree CVs the way an upload would, into the file's root hash. */
+function viaSubtrees(bytes) {
+    if (bytes.length <= CHUNK)
+        return null; // a single chunk is not merged, so there is nothing extra to check
+    let level = [];
+    for (let off = 0; off < bytes.length; off += CHUNK) {
+        const end = Math.min(off + CHUNK, bytes.length);
+        if (end - off !== CHUNK)
+            return null; // a partial final chunk is not an aligned subtree: phase 3's problem
+        level.push(subtreeCV(bytes.subarray(off, end), off / CHUNK_LEN));
+    }
+    while (level.length > 2) {
+        const next = [];
+        for (let i = 0; i < level.length; i += 2)
+            next.push(mergeNonRoot(level[i], level[i + 1]));
+        level = next;
+    }
+    return toHex(mergeRoot(level[0], level[1]));
+}
+
+const out = document.getElementById("out");
+const results = {};
+const names = await (await fetch("./crosscheck-data/files.json")).json();
+for (const name of names) {
+    const bytes = new Uint8Array(await (await fetch("./crosscheck-data/" + name)).arrayBuffer());
+    results[name] = { oneShot: toHex(hash(bytes)), subtrees: viaSubtrees(bytes) };
+    out.textContent = "hashed " + Object.keys(results).length + "/" + names.length;
+}
+out.textContent = "done";
+window.__results = results;
+</script>
+</body>

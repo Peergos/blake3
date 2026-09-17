@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BLAKE3 vs WebCrypto benchmark</title>
+<body style="font: 14px monospace; padding: 16px; max-width: 900px">
+<h1>Phase 0 benchmark</h1>
+<p>Target from blake3.md: <b>≥742 MiB/s</b>, i.e. WebCrypto SHA-256's 6.7&nbsp;ms per 5&nbsp;MiB.</p>
+<pre id="out">running…</pre>
+<script type="module">
+const MiB = 1024 * 1024;
+const out = document.getElementById("out");
+const log = [];
+const say = (line) => {
+    log.push(line);
+    out.textContent = log.join("\n");
+};
+
+/** Run one mode in `workers` parallel workers, each hashing its own buffer. */
+function measure(mode, sizeBytes, runs, warmup, workers) {
+    return new Promise((resolve, reject) => {
+        const all = [];
+        let done = 0;
+        const started = performance.now();
+        for (let w = 0; w < workers; w++) {
+            const worker = new Worker("./worker.js", { type: "module" });
+            worker.onerror = (e) => reject(new Error(mode + ": " + (e.message || "worker error")));
+            worker.onmessage = (e) => {
+                all.push(...e.data.times);
+                worker.terminate();
+                if (++done === workers) {
+                    const wall = performance.now() - started;
+                    all.sort((a, b) => a - b);
+                    resolve({
+                        mode, workers,
+                        sizeMiB: sizeBytes / MiB,
+                        medianMs: all[Math.floor(all.length / 2)],
+                        bestMs: all[0],
+                        // per worker rate, from that worker's own timings
+                        perWorkerMiBs: (sizeBytes / MiB) / (all[Math.floor(all.length / 2)] / 1000),
+                        // what an upload actually gets: all bytes hashed / wall clock
+                        aggregateMiBs: (workers * runs * sizeBytes / MiB) / (wall / 1000),
+                    });
+                }
+            };
+            worker.postMessage({ mode, sizeBytes, runs, warmup, seed: 12345 + w });
+        }
+    });
+}
+
+const cores = navigator.hardwareConcurrency || 4;
+const results = { userAgent: navigator.userAgent, cores, rows: [] };
+const row = (r) => {
+    results.rows.push(r);
+    say(("  " + r.mode).padEnd(24) + String(r.sizeMiB).padStart(3) + " MiB  "
+        + ("x" + r.workers).padStart(4) + "  median " + r.medianMs.toFixed(1).padStart(7)
+        + " ms   per-worker " + r.perWorkerMiBs.toFixed(0).padStart(5)
+        + " MiB/s   aggregate " + r.aggregateMiBs.toFixed(0).padStart(5) + " MiB/s");
+};
+
+try {
+    say("cores reported: " + cores);
+    say("");
+    say("baseline (what we have to match):");
+    row(await measure("sha256", 5 * MiB, 20, 3, 1));
+    row(await measure("sha512", 5 * MiB, 20, 3, 1));
+    say("");
+    say("pure JS blake3, the real workload (4 MiB subtree chaining value):");
+    row(await measure("blake3-subtree", 4 * MiB, 10, 2, 1));
+    say("");
+    say("same size as the baseline, for a like-for-like rate:");
+    row(await measure("blake3-oneshot", 5 * MiB, 10, 2, 1));
+    say("");
+    say("parallel, which is what HashTree.buildParallel already does:");
+    for (const n of [2, 4, cores])
+        row(await measure("blake3-subtree", 4 * MiB, 6, 1, n));
+    say("");
+    say("sha256 in parallel, for the same comparison:");
+    row(await measure("sha256", 5 * MiB, 20, 3, cores));
+
+    const b3 = results.rows.find(r => r.mode === "blake3-subtree" && r.workers === 1);
+    const sha = results.rows.find(r => r.mode === "sha256" && r.workers === 1);
+    results.verdict = {
+        targetMiBs: 742,
+        blake3SingleMiBs: b3.perWorkerMiBs,
+        sha256SingleMiBs: sha.perWorkerMiBs,
+        blake3BestAggregateMiBs: Math.max(...results.rows
+            .filter(r => r.mode === "blake3-subtree").map(r => r.aggregateMiBs)),
+        meetsTargetSingleThread: b3.perWorkerMiBs >= 742,
+    };
+    say("");
+    say("single thread: blake3 " + b3.perWorkerMiBs.toFixed(0) + " MiB/s vs sha256 "
+        + sha.perWorkerMiBs.toFixed(0) + " MiB/s, ratio "
+        + (b3.perWorkerMiBs / sha.perWorkerMiBs).toFixed(2) + "x");
+    say("target met single threaded: " + (results.verdict.meetsTargetSingleThread ? "yes" : "NO"));
+    window.__results = results;
+} catch (e) {
+    say("ERROR " + (e && e.stack || e));
+    results.error = String(e);
+    window.__results = results;
+}
+</script>
+</body>

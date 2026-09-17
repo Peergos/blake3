@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BLAKE3 tests</title>
+<body style="font: 14px monospace; padding: 16px">
+<h1>BLAKE3 tests</h1>
+<pre id="out">running…</pre>
+<script type="module">
+import { runTests } from "./tests.mjs";
+const out = document.getElementById("out");
+try {
+    const vectors = await (await fetch("./test_vectors.json")).json();
+    const t0 = performance.now();
+    const res = runTests(vectors);
+    const lines = res.failures.map(f => "FAIL " + f.name + "\n  got  " + f.got + "\n  want " + f.want);
+    lines.push((res.failed === 0 ? "OK" : "FAILED") + ": " + res.passed + " passed, " + res.failed
+        + " failed in " + ((performance.now() - t0) / 1000).toFixed(1) + "s");
+    out.textContent = lines.join("\n");
+    window.__results = res;
+} catch (e) {
+    out.textContent = "ERROR " + (e && e.stack || e);
+    window.__results = { passed: 0, failed: 1, failures: [{ name: "threw", got: String(e), want: "-" }] };
+}
+</script>
+</body>

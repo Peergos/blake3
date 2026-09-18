@@ -57,17 +57,27 @@ rearrangement of the JavaScript found a way round it.
 Every row hashes **4 MiB**, so latencies compare directly as well as rates. Run to run
 these vary by about 10%.
 
-| 1 worker, 4 MiB | Firefox 155 | Chromium |
-|---|---|---|
-| WebCrypto SHA-256 (the bar) | 5.1 ms - **781 MiB/s** | 4.4 ms - **901 MiB/s** |
-| WebCrypto SHA-512 | 11.2 ms - 357 MiB/s | 8.3 ms - 483 MiB/s |
-| **wasm, `wasm32_simd`** | **2.1 ms - 1905 MiB/s** | **2.2 ms - 1798 MiB/s** |
-| wasm, portable scalar | 7.0 ms - 573 MiB/s | 5.7 ms - 703 MiB/s |
-| wasm, `+simd128` flag only | 6.8 ms - 587 MiB/s | 5.9 ms - 677 MiB/s |
-| wasm kernel only, no copy | 6.9 ms - 580 MiB/s | 5.8 ms - 690 MiB/s |
-| wasm copy into linear memory alone | 0.1 ms | 0.1 ms |
-| **optimised JS** | 16.0 ms - **249 MiB/s** | 5.0 ms - **798 MiB/s** |
-| readable JS | 30.1 ms - 133 MiB/s | 33.8 ms - 118 MiB/s |
+| 1 worker, 4 MiB | Firefox 155 | Chromium | Android WebView 151 |
+|---|---|---|---|
+| WebCrypto SHA-256 (the bar) | 5.1 ms - **781 MiB/s** | 4.4 ms - **901 MiB/s** | 11.7 ms - **427 MiB/s** |
+| WebCrypto SHA-512 | 11.2 ms - 357 MiB/s | 8.3 ms - 483 MiB/s | 9.8 ms - 510 MiB/s |
+| **wasm, `wasm32_simd`** | **2.1 ms - 1905 MiB/s** | **2.2 ms - 1798 MiB/s** | **2.8 ms - 1429 MiB/s** |
+| wasm, portable scalar | 7.0 ms - 573 MiB/s | 5.7 ms - 703 MiB/s | 5.7 ms - 702 MiB/s |
+| wasm, `+simd128` flag only | 6.8 ms - 587 MiB/s | 5.9 ms - 677 MiB/s | 5.6 ms - 714 MiB/s |
+| wasm kernel only, no copy | 6.9 ms - 580 MiB/s | 5.8 ms - 690 MiB/s | 5.5 ms - 727 MiB/s |
+| wasm copy into linear memory alone | 0.1 ms | 0.1 ms | 0.1 ms |
+| **optimised JS** | 16.0 ms - **249 MiB/s** | 5.0 ms - **798 MiB/s** | 6.2 ms - **645 MiB/s** |
+| readable JS | 30.1 ms - 133 MiB/s | 33.8 ms - 118 MiB/s | 43.7 ms - 92 MiB/s |
+
+The Android numbers are an x86_64 emulator on this desktop, not a phone: an emulated
+Android runs the host's cores, so treat it as "the WebView engine on this hardware", which
+is what isolates the engine from the phone. A real device will be slower in proportion to
+its cpu, and the ratios are what carry over.
+
+Two things carry over from it regardless. **WebView is the one engine where the optimised
+JS beats the sha256 it would replace** (645 vs 427 MiB/s, 1.5x), because Chromium's
+WebCrypto sha256 on this platform is half the speed of the desktop one while V8's JIT is
+not. And the wasm build is **3.3x sha256** there, the widest margin of the three.
 
 At 5 MiB sha256 measures 814 MiB/s (Firefox) and 1033 (Chromium), so the rate hardly
 moves with input size.
@@ -113,6 +123,10 @@ unminified.
   subtree chaining values. Lengths are weighted towards block and chunk boundaries.
 - `tools/profile.py` — runs the Gecko profiler over a long single-threaded run and reports
   the JIT tier of every frame.
+- `tools/android.py` — runs a page in the real Android WebView. There is no marionette or
+  chromedriver for a phone's WebView, so the page posts its results back to the server
+  instead, reached over `adb reverse`. `--build` builds and installs the tiny host app in
+  `tools/wvbench` straight from the SDK build tools: no gradle, no network.
 
 ## Running it
 
@@ -124,6 +138,11 @@ python3 tools/crosscheck.py firefox          # vs the b3sum binary
 python3 tools/fuzz.py 150 firefox            # fuzz everything, random seed
 python3 tools/fuzz.py 80 20260918 chromium   # ... or a fixed one, as CI does
 python3 tools/profile.py fast 8              # what the firefox jit did with it
+
+# android webview, against a booted emulator or a usb device
+$ANDROID_HOME/emulator/emulator -avd <avd> -no-window -gpu swiftshader_indirect &
+python3 tools/android.py wasm --build        # correctness, building the host app first
+python3 tools/android.py bench               # the numbers
 node test/node.mjs                           # js tests, no browser
 node test/b3sum.mjs                          # vs b3sum, no browser
 
@@ -141,6 +160,7 @@ cp target/wasm32-unknown-unknown/release/blake3_wasm.wasm ../bench/wasm/blake3-s
   indices including a 4 MiB subtree at offset 4 MiB.
 - `b3sum` agreement on random files at 0, 1, 1023, 1024, 1025, 4 MiB−1, 4 MiB, 4 MiB+1,
   8 MiB and 10 MiB bytes.
+- All 207 cross-implementation assertions pass in the Android WebView too.
 - Fuzzing: 5677 checks over 168 MiB of random data at random lengths, in Firefox and
   Chromium, with zero failures - every shape, every wasm build, whole-input hashes against
   b3sum and subtree chaining values against the reference. The fuzzer was itself checked

@@ -49,6 +49,20 @@ function measure(mode, sizeBytes, runs, warmup, workers) {
     });
 }
 
+/** Hand results back to the server, for a browser that cannot be driven from outside. */
+async function report(results) {
+    if (new URLSearchParams(location.search).get("report") === null)
+        return;
+    try {
+        await fetch("/report", { method: "POST", headers: { "content-type": "application/json" },
+                                 body: JSON.stringify(results) });
+        say("");
+        say("reported to the server");
+    } catch (e) {
+        say("could not report: " + e);
+    }
+}
+
 const cores = navigator.hardwareConcurrency || 4;
 const results = { userAgent: navigator.userAgent, cores, rows: [] };
 const row = (r) => {
@@ -140,10 +154,12 @@ try {
             + " at " + wasmBest.perWorkerMiBs.toFixed(0) + " MiB/s, "
             + (wasmBest.perWorkerMiBs / sha.perWorkerMiBs).toFixed(2) + "x sha256");
     window.__results = results;
+    await report(results);
 } catch (e) {
     say("ERROR " + (e && e.stack || e));
     results.error = String(e);
     window.__results = results;
+    await report(results);
 }
 </script>
 </body>

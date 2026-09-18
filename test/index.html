@@ -5,6 +5,7 @@
 <h1>BLAKE3 tests</h1>
 <pre id="out">running…</pre>
 <script type="module">
+import { report } from "../src/report.js";
 import { runTests } from "./tests.mjs";
 const out = document.getElementById("out");
 try {
@@ -16,9 +17,11 @@ try {
         + " failed in " + ((performance.now() - t0) / 1000).toFixed(1) + "s");
     out.textContent = lines.join("\n");
     window.__results = res;
+    await report(window.__results);
 } catch (e) {
     out.textContent = "ERROR " + (e && e.stack || e);
     window.__results = { passed: 0, failed: 1, failures: [{ name: "threw", got: String(e), want: "-" }] };
+    await report(window.__results);
 }
 </script>
 </body>

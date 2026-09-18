@@ -25,6 +25,11 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+# results POSTed back by a page, for browsers this script cannot drive - a phone's
+# WebView, say, where there is no marionette and no chromedriver
+REPORTS = []
+
+
 def serve():
     """A local http server, because module imports and fetch() do not work on file://."""
     class Handler(http.server.SimpleHTTPRequestHandler):
@@ -33,6 +38,26 @@ def serve():
 
         def log_message(self, *a):
             pass
+
+        def do_POST(self):
+            if self.path != "/report":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            try:
+                REPORTS.append(json.loads(body))
+            except ValueError:
+                REPORTS.append({"error": "unparseable report", "raw": body[:200].decode("utf-8", "replace")})
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "content-type")
+            self.end_headers()
 
         def end_headers(self):
             # cross origin isolation, so the page may use SharedArrayBuffer - the

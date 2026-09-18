@@ -4,6 +4,7 @@
 <body style="font: 14px monospace; padding: 16px">
 <pre id="out">running…</pre>
 <script type="module">
+import { report } from "../src/report.js";
 import { load } from "../bench/wasm.js";
 import * as fast from "../src/blake3-fast.js";
 import { hash as jsHash, subtreeCV as jsSubtreeCV, toHex, CHUNK_LEN } from "../src/blake3.js";
@@ -88,9 +89,11 @@ try {
     lines.push((failures.length === 0 ? "OK" : "FAILED") + ": " + passed + " passed, " + failures.length + " failed");
     out.textContent = lines.join("\n");
     window.__results = { passed, failed: failures.length, failures };
+    await report(window.__results);
 } catch (e) {
     out.textContent = "ERROR " + (e && e.stack || e);
     window.__results = { passed, failed: 1, failures: [{ name: "threw", got: String(e), want: "-" }] };
+    await report(window.__results);
 }
 </script>
 </body>

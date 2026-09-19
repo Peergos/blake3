@@ -567,10 +567,20 @@ export function subtreeCVB%d(bytes, chunkIndex) {
 
 def main():
     import os
+    import sys
     one_round = "\n".join(
         g(a, b, c, d, f"m{2 * q}", f"m{2 * q + 1}", 16)
         for q, (a, b, c, d) in enumerate(QUARTETS))
-    out = (HEADER + chunk_function() + parent_function() + API + (SMALL % rounds(4))
+    shipping = HEADER + chunk_function() + parent_function() + API
+    if "--ship" in sys.argv:
+        # Only the shape that ships. The other seven exist to be measured against it, and
+        # they are most of the file, which lands in the initial page load.
+        path = sys.argv[sys.argv.index("--ship") + 1]
+        with open(path, "w") as f:
+            f.write(shipping)
+        print("wrote %s (%d lines)" % (path, shipping.count("\n") + 1))
+        return
+    out = (shipping + (SMALL % rounds(4))
            + (LOOP7 % (one_round, permutation_swaps(20)))
            + (MEM % rounds(12, msg=lambda i: f"words[o + {i}]"))
            + (X2 % interleaved_rounds(12))

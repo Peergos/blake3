@@ -280,6 +280,14 @@ function leftSubtreeLen(len) {
     return chunks * CHUNK_LEN;
 }
 
+/**
+ * CV of a trailing piece of a file, whose length need not be a power of two number of whole
+ * chunks - what the last chunk of a file needs, since `subtreeCV` rejects it.
+ */
+export function tailCV(bytes, chunkIndex) {
+    return nonRootCV(bytes, 0, bytes.length, chunkIndex);
+}
+
 /** CV of any input, aligned at `chunkIndex`, whose length need not be a power of two. */
 function nonRootCV(bytes, off, len, chunkIndex) {
     if (len <= CHUNK_LEN) {
